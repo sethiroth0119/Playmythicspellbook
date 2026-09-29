@@ -1,0 +1,432 @@
+{
+ "system": "Haul",
+ "label": "Highway Haul",
+ "icon": "🚛",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "haulOpenBoard",
+   "name": "haulOpenBoard",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 247179,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "App._cityNodeId",
+    "Forge.territoryWars"
+   ],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "haulAutoOrient",
+   "name": "haulAutoOrient",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 491,
+   "params": [
+    "THREE",
+    "obj",
+    "url"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "haulLoadGLB",
+   "name": "haulLoadGLB",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 449,
+   "params": [
+    "THREE",
+    "url"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "haul",
+   "name": "haul",
+   "kind": "function",
+   "file": "public/src/foundry/taps.js",
+   "line": 215,
+   "params": [
+    "st",
+    "h",
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "_haulWhy",
+   "name": "_haulWhy",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 247112,
+   "params": [
+    "e",
+    "fallback"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "_haulModelOf",
+   "name": "_haulModelOf",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 247130,
+   "params": [
+    "v"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "_haulDriveIt",
+   "name": "_haulDriveIt",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 247170,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "_haulHasDepot",
+   "name": "_haulHasDepot",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 247245,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "haulOnLot",
+   "name": "haulOnLot",
+   "kind": "function",
+   "file": "public/src/transport/index.js",
+   "line": 855,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "cargoClasses",
+   "name": "cargoClasses",
+   "kind": "function",
+   "file": "public/src/transport/index.js",
+   "line": 1709,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "cargoClassOf",
+   "name": "cargoClassOf",
+   "kind": "pure",
+   "file": "public/src/transport/index.js",
+   "line": 1710,
+   "params": [
+    "rig"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "cargoClassIds",
+   "name": "cargoClassIds",
+   "kind": "pure",
+   "file": "public/src/transport/index.js",
+   "line": 1716,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "haulCost",
+   "name": "haulCost",
+   "kind": "function",
+   "file": "public/src/refinery/contracts.js",
+   "line": 278,
+   "params": [
+    "litres",
+    "km"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "cargoClass",
+   "name": "cargoClass",
+   "kind": "pure",
+   "file": "public/src/haul/index.js",
+   "line": 339,
+   "params": [
+    "resource"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "upgradeEffects",
+   "name": "upgradeEffects",
+   "kind": "pure",
+   "file": "public/src/haul/index.js",
+   "line": 351,
+   "params": [
+    "levels"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "rigProfile",
+   "name": "rigProfile",
+   "kind": "pure",
+   "file": "public/src/haul/index.js",
+   "line": 405,
+   "params": [
+    "v"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "haulGLTFLoader",
+   "name": "haulGLTFLoader",
+   "kind": "pure",
+   "file": "public/src/haul/index.js",
+   "line": 435,
+   "params": [
+    "THREE"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "haulKnownRot",
+   "name": "haulKnownRot",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 476,
+   "params": [
+    "url"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "haulRooflineScore",
+   "name": "haulRooflineScore",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 480,
+   "params": [
+    "h"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "haulFit",
+   "name": "haulFit",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 548,
+   "params": [
+    "THREE",
+    "obj",
+    "dims",
+    "rotY",
+    "uniform"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "haulDeckOf",
+   "name": "haulDeckOf",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 567,
+   "params": [
+    "THREE",
+    "obj",
+    "size",
+    "frame"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "raiderLead",
+   "name": "raiderLead",
+   "kind": "pure",
+   "file": "public/src/haul/index.js",
+   "line": 602,
+   "params": [
+    "R",
+    "S",
+    "traffic"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "raiderSteer",
+   "name": "raiderSteer",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 614,
+   "params": [
+    "R",
+    "S",
+    "lead",
+    "roadHalf",
+    "dt"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "planRun",
+   "name": "planRun",
+   "kind": "function",
+   "file": "public/src/haul/index.js",
+   "line": 678,
+   "params": [
+    "cities",
+    "fromId",
+    "toId",
+    "opts"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2456
+  }
+ ],
+ "edges": [
+  {
+   "from": "haulOpenBoard",
+   "to": "_haulHasDepot"
+  },
+  {
+   "from": "haulAutoOrient",
+   "to": "haulKnownRot"
+  },
+  {
+   "from": "haulAutoOrient",
+   "to": "haulRooflineScore"
+  },
+  {
+   "from": "haulLoadGLB",
+   "to": "haulGLTFLoader"
+  },
+  {
+   "from": "haul",
+   "to": "haulCost"
+  }
+ ]
+}

@@ -1,0 +1,943 @@
+<title>Hexfield Gauntlet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<script id="run-data" type="application/json">
+{
+  "updated": "2026-08-22 \u2014 Run complete: 102 pass, 0 fail",
+  "headline": "Ten pieces, thirty-one critic rounds, one gate. The last FAIL is closed.",
+  "phase": "Complete",
+  "round": 8,
+  "goal": "Rebuild the battlefield as a full-field hex map \u2014 XCOM + Fire Emblem + FFT \u2014 in a post-apocalyptic world. Free camera (WASD pan, Q/E turn), five lootable ruins, three SCP-truck control points, XCOM-style move and attack arrows. Every existing battlefield function survives.",
+  "bar": [
+    "Sprite units and heroes stay sprites \u2014 extremely clear, high quality on the board",
+    "The battlefield itself is beautiful: dirt, cracked street, rubble, grass reclaiming it",
+    "Loot sites read as destroyed: car, church, school, hospital, house",
+    "Control points are SCP trucks with nodes",
+    "Looting a ruin opens the exact tombstone salvage grid \u2014 take and swap",
+    "Hold 2 of 3 points for 3 straight turns to win, without killing the hero",
+    "Move and attack telegraph with a path arrow, XCOM-style",
+    "Every current battlefield function still works"
+  ],
+  "pieces": [
+    {
+      "name": "Headless board harness",
+      "state": "won",
+      "note": "Drives the real canvas stage over the real postMessage protocol, with payload shapes copied from the game's own senders, so every later critic looks at pixels instead of grading prose. Scenes are labelled by provenance \u2014 which parts of a frame the game could actually have produced.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "payloads richer than the game sends",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "as-shipped scene added",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Metric + bounds unification",
+      "state": "won",
+      "note": "99 inlined Chebyshev sites and 6 hand-rolled bounds checks now route through one definition each. Proven by executing pre- and post-change functions side by side across five board shapes: 312,447 comparisons, 0 mismatches. The leftover \u2014 clampUnitsToBoard still reading constants instead of the live board \u2014 was handed to Wave 2, where it actually bites.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "a hunk changed meaning",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "verify sweep clean",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Hex lattice \u2014 board side",
+      "state": "won",
+      "note": "Pointy-top hexes tessellating cleanly at 14x12; side walls now pick their faces by projected outward normal rather than fixed cube-face indices, so they survive a rotating camera later. tileAt became an indexed lookup \u2014 it was a linear scan called per tile per frame.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "3x the tiles, same screen area",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "handed to terrain",
+          "short": "\u25d1"
+        }
+      ]
+    },
+    {
+      "name": "Hex lattice \u2014 game side",
+      "state": "won",
+      "note": "Cube distance over odd-r offsets, six neighbours everywhere. Two enumerations were placing a raised zombie and a tunnelling unit two tiles from the hero on odd rows with no distance filter at all. Five card descriptions still promised '8 adjacent tiles' for what is now a six-hex disc \u2014 fixed, display text only.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "fail",
+          "label": "4 square enumerations survived",
+          "short": "\u2717"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "card text still lied",
+          "short": "\u25d1"
+        }
+      ]
+    },
+    {
+      "name": "Free camera",
+      "state": "won",
+      "note": "WASD pans in the camera plane so it still feels right after you turn; Q/E yaws; R restores the neutral pose exactly. The baked ground is keyed on camera pose now \u2014 without that it stayed nailed to the screen while the board turned underneath it, silently. Picking stays exact at every pose: 7,358 click samples across 48 poses, 0 mismatches.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "bake dies on pan+yaw",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "holds at every pose",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Post-apocalyptic terrain",
+      "state": "won",
+      "note": "Six rounds. Relief too shallow to read; then a diorama still on a photograph; then braziers marking the old rectangle in fire; then the whole field at 19% of the value range with all the height at the rim; then seams cutting every tile apart. Each round killed the gap the last critic named.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "relief 4.7px per step",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "plate on a photograph",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "rework",
+          "label": "braziers = the old rectangle",
+          "short": "\u25d1"
+        },
+        {
+          "n": 4,
+          "verdict": "rework",
+          "label": "seams cut every tile apart",
+          "short": "\u25d1"
+        },
+        {
+          "n": 5,
+          "verdict": "rework",
+          "label": "inset trench survived",
+          "short": "\u25d1"
+        },
+        {
+          "n": 6,
+          "verdict": "pass",
+          "label": "joined shelf",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Ruins + loot",
+      "state": "won",
+      "note": "Verified end to end by the regression gate: looting a ruin calls the same single _lootGridOpen the tombstones call \u2014 identity, not similarity, which is what was asked for. Placement now rejects both the placer's row and the mirrored row so a ruin cannot be cropped off the multiplayer guest's screen either.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "school unidentifiable",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "keep-out asymmetric",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "symmetric, loot verified",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "SCP truck control points",
+      "state": "won",
+      "note": "Verified by executing the turn loop, not reading it: holding two of three for three straight turns wins, the streak resets rather than pausing when you drop below two, and the score falls when a point is lost. The tick fires once per side per turn in both single-player and multiplayer \u2014 it double-counted in one and not the other until a critic stepped a real match.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "double-ticks in multiplayer",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "MP win never ends the match",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "MP ending legitimate",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "XCOM telegraph",
+      "state": "won",
+      "note": "Reachable region as one traced contour; the arrow follows the game's own pathfinder so it bends where the unit bends. Then the deeper half: the walk itself now travels with the move rather than reading a UI overlay, so the multiplayer receive path and the replay stepper walk the real bent route too, instead of sliding straight through walls.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "enemy never telegraphed",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "rework",
+          "label": "sprite ignores its own route",
+          "short": "\u25d1"
+        },
+        {
+          "n": 3,
+          "verdict": "pass",
+          "label": "route travels with the move",
+          "short": "\u2713"
+        }
+      ]
+    },
+    {
+      "name": "Sprite clarity",
+      "state": "won",
+      "note": "Sprites stayed sprites and got crisper \u2014 enemy nameplates with segmented health bars, blue rings under your units and red under theirs, and units no longer draw through terrain nearer than they are. The HUD was restyled against the existing chrome tokens; every panel kept its function and its position.",
+      "rounds": [
+        {
+          "n": 1,
+          "verdict": "rework",
+          "label": "critique cut short by restart",
+          "short": "\u25d1"
+        },
+        {
+          "n": 2,
+          "verdict": "pass",
+          "label": "silhouettes unbroken",
+          "short": "\u2713"
+        }
+      ]
+    }
+  ],
+  "log": [
+    {
+      "t": "00:00",
+      "kind": "start",
+      "text": "Gauntlet opened. Two-layer architecture confirmed: public/index.html holds game logic (BOARD_W 8 x BOARD_H 7, renderBattle, _lootGridOpen, _lootWithUnit); public/battle-board/index.html is a 2,950-line canvas perspective stage driven entirely by postMessage."
+    },
+    {
+      "t": "00:04",
+      "kind": "phase",
+      "text": "Phase R \u2014 four readers fanned out over the stage renderer, the square-grid game logic, the tombstone loot system, and the turn loop + UI style."
+    },
+    {
+      "t": "00:12",
+      "kind": "tooling",
+      "text": "Capture rig built and proven: real Chromium at 2x renders the live board to PNG headlessly. Critics will look at pixels, not at claims. Baseline captured."
+    },
+    {
+      "t": "00:14",
+      "kind": "finding",
+      "text": "Baseline is a long way from the bar: the board is a small floating plate in the middle of a matte painting, while the FFT reference is a full-frame diorama with real elevation and lit cliff faces. That gap is the whole job."
+    },
+    {
+      "t": "00:23",
+      "kind": "phase",
+      "text": "Recon closed \u2014 817-line contract brief. 22 inbound board messages, 9 outbound; game 'y' is board 'z'; _lootGridOpen is already generic enough to reuse unchanged; _twTickGameMode and _twEvalObjectives are existing per-turn and victory seams."
+    },
+    {
+      "t": "00:25",
+      "kind": "finding",
+      "text": "Two landmines named before anyone writes code: the metric is inlined ~80 times rather than calling distance(), and gw()/pickTile() are inverses with no assertion tying them. Both become their own pieces rather than being discovered mid-build."
+    },
+    {
+      "t": "00:28",
+      "kind": "build",
+      "text": "Wave 1 launched on disjoint files \u2014 the harness (new files) and the metric unification (index.html) build in parallel, each followed by a fresh-context critic that re-runs the work itself rather than trusting the report."
+    },
+    {
+      "t": "01:35",
+      "kind": "critic",
+      "text": "Both Wave 1 critics returned rework twice \u2014 one caught a hunk that changed meaning, the other caught the harness pushing payloads richer than the game can actually send, which would have validated sprite work against frames the game never produces."
+    },
+    {
+      "t": "01:38",
+      "kind": "pass",
+      "text": "Independent verify sweep: clean. No breakage, no npm dependency, syntax gates green. Wave 1 committed."
+    },
+    {
+      "t": "01:41",
+      "kind": "finding",
+      "text": "With the harness rendering real sprite units on the real board, the distance to the bar is unmistakable: a glass table floating on a matte painting, where the reference is a full-frame diorama with real elevation and lit cliff faces."
+    },
+    {
+      "t": "01:44",
+      "kind": "build",
+      "text": "Wave 2 launched. One binding spec \u2014 pointy-top, odd-r offset, cube distance \u2014 written down first so two builders converting two independent lattices cannot each invent their own. Board grows 8x7 to 14x12, driven from one constant pair."
+    },
+    {
+      "t": "01:44",
+      "kind": "phase",
+      "text": "A reconciler runs after both: it executes the game's metric and the stage's projection together in one process and proves, tile by tile, that the six tiles the rules call adjacent are the six hexagons physically touching on screen. Nothing in either file asserts that today."
+    },
+    {
+      "t": "04:50",
+      "kind": "critic",
+      "text": "Wave 2 game-side round 1: FAIL. The critic found four square-lattice enumerations still live \u2014 two of them walking the eight square offsets to place a unit the card text calls 'adjacent', with no distance filter and no bounds check. On an odd row that put a raised zombie two tiles from the hero, silently."
+    },
+    {
+      "t": "05:40",
+      "kind": "critic",
+      "text": "Board-side round 1: the board got three times the tiles and did not get any bigger. The camera was holding screen area constant, so the extra tiles were paid for out of hex size and sprite size \u2014 measured at 1/22 of frame height against the bar's 1/12."
+    },
+    {
+      "t": "06:55",
+      "kind": "pass",
+      "text": "Reconciler: the two lattices ARE the same lattice. 168/168 tiles round-trip world-space, 33,600 jittered points inside the tile inradius, and the six tiles the rules call adjacent are exactly the six hexagons physically touching on screen \u2014 on both row parities, unclipped past the board edge. In real Chromium: 162 clicks and ~220,000 sampled pixels, zero resolving to the wrong hexagon."
+    },
+    {
+      "t": "07:05",
+      "kind": "build",
+      "text": "Wave 2 committed. Wave 3 opens on the piece the bar hinges on: the ground itself. Three rounds, a fresh critic each time doing a blind A/B against the two earlier captures of this same board, with a final judge who has seen none of the work."
+    },
+    {
+      "t": "09:20",
+      "kind": "critic",
+      "text": "Terrain round 1: the relief was measured, not eyeballed \u2014 one elevation step was 4.7px against 50px hexes, and the cap was deliberate: pickTile only intersects the y=0 plane, so taller slabs would resolve clicks to the row behind. The art could not get taller until picking got smarter."
+    },
+    {
+      "t": "10:30",
+      "kind": "critic",
+      "text": "Round 2 closed that and exposed the next layer: 45% of the frame was still photographic backdrop. Round 3 closed THAT and exposed the last one \u2014 four ornate braziers standing at exactly the corners of the old board rectangle, the only lattice-aligned furniture left, owning 27,220 gold pixels in a frame otherwise pulled down to 0.9% saturation."
+    },
+    {
+      "t": "11:40",
+      "kind": "critic",
+      "text": "Final judge: ranked the new board far above both baselines, then refused to pass it. 89.5% of pixels sit below L=96 because every material's fully-lit colour is near-black by construction \u2014 the light rig was never the problem. And every rung-3+ tile is in the outer rows, so the play area itself is flat."
+    },
+    {
+      "t": "11:45",
+      "kind": "finding",
+      "text": "The judge also found a real bug, not an art gap: four hexes are completely unclickable. A tall mound in the row in front can bury a low tile entirely, so no pixel inside it resolves to it \u2014 you cannot move there, select a unit standing there, or target it, while the DOM board still can. The in-tree self-check passes on that exact map because it files those tiles under 'occluded' and calls it acceptable."
+    },
+    {
+      "t": "11:50",
+      "kind": "build",
+      "text": "Wave 4 launched on two disjoint regions: the terrain fixes plus that bug, and the five lootable ruins. Control points and the alternate victory follow in the same wave."
+    },
+    {
+      "t": "13:10",
+      "kind": "critic",
+      "text": "Wave 4: the ruins critic confirmed looting a structure calls the real _lootGridOpen rather than a lookalike \u2014 the requirement was identity, not similarity. It failed the school instead: four of five buildings carry an unmistakable icon and the school is a dark box."
+    },
+    {
+      "t": "13:35",
+      "kind": "critic",
+      "text": "The objectives critic caught the exact trap the brief warned about, by executing the turn loop instead of reading it: the per-turn tick double-counts in multiplayer but not single-player, because the turn counter increments in two different places."
+    },
+    {
+      "t": "14:05",
+      "kind": "critic",
+      "text": "And a subtler one on placement: the height-aware keep-out that stops a ruin being buried is applied in the sender's coordinate frame, while multiplayer mirrors every position 180\u00b0 for the other client. The guarantee held for one player and not the other."
+    },
+    {
+      "t": "14:20",
+      "kind": "build",
+      "text": "Wave 4 committed \u2014 ruins, control points, the value-range fix, and the unclickable-tile bug. Deploy knobs moved together to v120x0."
+    },
+    {
+      "t": "14:25",
+      "kind": "build",
+      "text": "Wave 5 launched: free camera and the mirror fix in parallel, then the XCOM telegraph, then sprite clarity and the UI restyle \u2014 and finally a regression gate that inventories every battlefield function the game had before this work and verifies each one still works, by executing it rather than reading it."
+    },
+    {
+      "t": "14:10",
+      "kind": "critic",
+      "text": "Ruins critic: the loot identity requirement passes \u2014 a structure opens the real _lootGridOpen, not a lookalike. The gap is art: four ruins carry an unmistakable icon and the school carries none, so it reads as the hospital without a cross."
+    },
+    {
+      "t": "15:05",
+      "kind": "critic",
+      "text": "Objectives critic caught exactly the trap the brief warned about, one level deeper. The tick correctly keys on WHO rather than the turn number \u2014 but in multiplayer one client runs the opponent's turn-start locally, broadcasts, and the opponent then runs its own, so the same point was banked twice."
+    },
+    {
+      "t": "15:40",
+      "kind": "critic",
+      "text": "A second ruins critic measured 400 seeds and found the fix from the previous round made things worse for the multiplayer guest: the keep-out protecting the host's framing pushed every ruin onto exactly the rows that mirror onto the guest's cropped edge. Host crops fell to 85/400, guest crops rose to 315/400 \u2014 worse than with the rule off."
+    },
+    {
+      "t": "18:30",
+      "kind": "pass",
+      "text": "Function-inventory gate ran: every battlefield function that existed before this work, enumerated from the code and tested on the new board. Nothing was deleted across four waves and the hex conversion is clean \u2014 distance symmetric over all 168x168 pairs, movement range identical to a brute-forced hex disc, cleave hitting the hex neighbour and leaving the square diagonal alone, traps firing, walls blocking, the AI taking a full legal turn."
+    },
+    {
+      "t": "18:32",
+      "kind": "critic",
+      "text": "It also found three breaks four waves of critics had missed. Replays render a board that never existed: the snapshot is an allow-list and the ruins, trucks, scores and map seed are not on it, so nothing throws and the replay just draws different terrain."
+    },
+    {
+      "t": "18:33",
+      "kind": "critic",
+      "text": "Knockback, pull, vortex and ice-slide all pick their direction with Math.sign on dx and dy \u2014 a square diagonal on a six-direction lattice. Measured: a shove from (6,7) landed two hexes away, straight through an enemy standing on the true neighbour."
+    },
+    {
+      "t": "18:34",
+      "kind": "critic",
+      "text": "And two tiles project off the canvas entirely. Real clicks there hit the page background \u2014 yet getValidMoves offers one of them as a legal destination, so the rules would send a unit somewhere the player can neither see nor click."
+    },
+    {
+      "t": "18:40",
+      "kind": "build",
+      "text": "Wave 5: the free camera and the arrows \u2014 the two requirements still entirely unbuilt \u2014 alongside all three breaks. Every critic this wave has to drive the thing rather than read it."
+    },
+    {
+      "t": "20:10",
+      "kind": "critic",
+      "text": "Camera critic found the bug the builder's own method could not: pan worked, yaw worked, and the terrain bake collapsed when they were COMBINED \u2014 the one input combination the feature exists to allow. Each had only ever been varied alone."
+    },
+    {
+      "t": "21:05",
+      "kind": "critic",
+      "text": "Telegraph round 1 drew arrows for your units only. The critic went back to the wording \u2014 'when a unit or hero moves' \u2014 and ruled that the enemy's move is exactly the one you most need telegraphed."
+    },
+    {
+      "t": "21:50",
+      "kind": "critic",
+      "text": "Round 2 added it, and the critic caught the deeper version instantly: the enemy telegraph drew a route around a wall and the enemy sprite then slid straight through the wall. The arrow was honest; the animation was not."
+    },
+    {
+      "t": "22:20",
+      "kind": "build",
+      "text": "Wave 5 committed \u2014 camera, arrows, mirror fix, nameplates and ownership rings. Wave 6 opens on the three breaks the regression gate found, the camera occlusion gap, and a final function-inventory gate that has to reproduce each original failure before it may call a fix closed."
+    },
+    {
+      "t": "27:10",
+      "kind": "critic",
+      "text": "The occlusion fix cut a straight-edged wedge out of a boss's head at yaw 90 \u2014 the mask was bounded from above and never from the side. The critic found it by A/B-ing the same frozen frame with the clip switched off, then proved the replacement with a null control at 0 differing pixels."
+    },
+    {
+      "t": "29:40",
+      "kind": "pass",
+      "text": "Function-inventory gate: 91 pass, 1 FAIL, 17 unverified. The fail was real \u2014 clicking a tile's CENTRE resolved to a neighbouring hexagon on 1-6 tiles of every match. It had been missed because the in-tree check only ever ran the fixture's default seed; across 24 random match seeds it failed on 24 of 24."
+    },
+    {
+      "t": "31:20",
+      "kind": "critic",
+      "text": "The first picking fix closed that hole and opened a smaller one in the same family: on a board-edge tile there is nothing behind the rejected back edge, so the sweep ran off the board and returned null. 1,914 of 184,215 drawn pixels selected nothing. The critic found it by rastering every pixel instead of sampling \u2014 and then proved the audit was blind to it by running a deliberately-too-wide rim through a fully green suite."
+    },
+    {
+      "t": "33:05",
+      "kind": "pass",
+      "text": "Sign-off: 102 pass, 0 fail, 17 unverified. Dead centres 0 on 24 of 24 seeds; 168/168 real mouse clicks correct at the shipped framing; the route walks bent on local, multiplayer-receive and replay paths alike, and reverts to a straight slide the moment the route is deleted \u2014 the old bug reproduces on demand, which is what makes the fix believable."
+    },
+    {
+      "t": "33:15",
+      "kind": "finding",
+      "text": "The sign-off also caught a ship-blocker nobody was looking for: the three deploy knobs agreed with each other, but at a version stamped three waves earlier. Shipping as-is would have left the update check silent and every existing client on the old bundle. All three bumped to v120x4."
+    }
+  ]
+}
+</script>
+
+<style>
+:root {
+  --ground: #eae7de;
+  --surface: #f4f2ec;
+  --sunken: #dedbd1;
+  --line: #cbc7ba;
+  --line-soft: #ded9cc;
+  --ink: #1c211f;
+  --ink-2: #4a534e;
+  --ink-3: #7c857f;
+  --accent: #a9701a;
+  --accent-soft: #f0e2c6;
+  --hold: #2f7a4c;
+  --contest: #a8621f;
+  --lost: #a83a33;
+  --idle: #a09a8c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0d1013;
+    --surface: #141a1d;
+    --sunken: #0a0d10;
+    --line: #263033;
+    --line-soft: #1c2427;
+    --ink: #d8ded9;
+    --ink-2: #96a09a;
+    --ink-3: #6b7873;
+    --accent: #e0a53c;
+    --accent-soft: #2a2317;
+    --hold: #63b37a;
+    --contest: #d98246;
+    --lost: #cf5a52;
+    --idle: #4a5450;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0d1013;
+  --surface: #141a1d;
+  --sunken: #0a0d10;
+  --line: #263033;
+  --line-soft: #1c2427;
+  --ink: #d8ded9;
+  --ink-2: #96a09a;
+  --ink-3: #6b7873;
+  --accent: #e0a53c;
+  --accent-soft: #2a2317;
+  --hold: #63b37a;
+  --contest: #d98246;
+  --lost: #cf5a52;
+  --idle: #4a5450;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Spline Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 40px) 80px;
+}
+
+/* ── masthead ─────────────────────────────────────────────── */
+
+header.top {
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    var(--ground);
+  position: relative;
+  overflow: hidden;
+}
+header.top::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(115deg, transparent 0 46%, color-mix(in srgb, var(--accent) 7%, transparent) 46% 47%, transparent 47%),
+    linear-gradient(65deg, transparent 0 71%, color-mix(in srgb, var(--accent) 5%, transparent) 71% 72%, transparent 72%);
+  pointer-events: none;
+}
+.top-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 26px clamp(16px, 4vw, 40px) 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px 32px;
+  align-items: flex-end;
+  position: relative;
+  z-index: 1;
+}
+.brand { flex: 1 1 340px; min-width: 0; }
+.eyebrow {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+h1 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 700;
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1.02;
+  letter-spacing: -0.005em;
+  margin: 0;
+  text-wrap: balance;
+}
+.headline {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+.stamps { display: flex; gap: 10px; flex-wrap: wrap; }
+.stamp {
+  border: 1px solid var(--line);
+  background: var(--ground);
+  padding: 7px 13px 8px;
+  min-width: 86px;
+}
+.stamp .k {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: block;
+}
+.stamp .v {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 700;
+  font-size: 21px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.stamp.live .v { color: var(--accent); }
+
+/* ── sections ─────────────────────────────────────────────── */
+
+section { margin-top: 44px; }
+h2 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+h2 .count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  margin-left: auto;
+  text-transform: none;
+}
+
+/* ── the brief ────────────────────────────────────────────── */
+
+.brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 28px 40px;
+}
+@media (max-width: 760px) { .brief { grid-template-columns: 1fr; } }
+.goal-text { margin: 0; max-width: 60ch; }
+.bar-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.bar-list li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.bar-list li::before {
+  content: "";
+  width: 9px;
+  height: 10px;
+  margin-top: 6px;
+  background: var(--accent);
+  opacity: 0.5;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+/* ── piece ledger ─────────────────────────────────────────── */
+
+.ledger { display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); }
+.piece {
+  background: var(--surface);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  align-items: start;
+}
+.piece .idx {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  padding-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.piece .nm {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.2;
+}
+.piece .note {
+  grid-column: 2;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+.piece .rounds { grid-column: 2; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.piece .state { justify-self: end; }
+
+.chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px 4px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.chip.pass  { border-color: color-mix(in srgb, var(--hold) 55%, transparent); color: var(--hold); background: color-mix(in srgb, var(--hold) 9%, transparent); }
+.chip.rework{ border-color: color-mix(in srgb, var(--contest) 55%, transparent); color: var(--contest); background: color-mix(in srgb, var(--contest) 9%, transparent); }
+.chip.fail  { border-color: color-mix(in srgb, var(--lost) 55%, transparent); color: var(--lost); background: color-mix(in srgb, var(--lost) 9%, transparent); }
+.chip.run   { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.chip.wait  { color: var(--ink-3); }
+
+/* ── round matrix ─────────────────────────────────────────── */
+
+.matrix-scroll { overflow-x: auto; border: 1px solid var(--line-soft); background: var(--surface); }
+table.matrix { border-collapse: collapse; width: 100%; min-width: 520px; }
+table.matrix th, table.matrix td {
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  padding: 9px 12px;
+  text-align: left;
+}
+table.matrix thead th {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+  background: var(--sunken);
+}
+table.matrix tbody th {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+}
+table.matrix td { text-align: center; padding: 6px; }
+.cell {
+  display: inline-block;
+  width: 100%;
+  height: 22px;
+  line-height: 22px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-3);
+  background: var(--sunken);
+}
+.cell.pass   { background: color-mix(in srgb, var(--hold) 26%, transparent); color: var(--hold); }
+.cell.rework { background: color-mix(in srgb, var(--contest) 26%, transparent); color: var(--contest); }
+.cell.fail   { background: color-mix(in srgb, var(--lost) 26%, transparent); color: var(--lost); }
+.cell.run    { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+
+/* ── log ──────────────────────────────────────────────────── */
+
+.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.log li {
+  display: grid;
+  grid-template-columns: 58px 76px minmax(0, 1fr);
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+  color: var(--ink-2);
+  align-items: baseline;
+}
+@media (max-width: 620px) {
+  .log li { grid-template-columns: 58px minmax(0, 1fr); }
+  .log li .kind { grid-column: 1 / -1; }
+}
+.log .t {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.log .kind {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.log .kind[data-k="critic"] { color: var(--contest); }
+.log .kind[data-k="pass"]   { color: var(--hold); }
+.log .kind[data-k="build"]  { color: var(--ink-3); }
+
+footer.foot {
+  margin-top: 56px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.empty {
+  padding: 26px 16px;
+  border: 1px dashed var(--line);
+  color: var(--ink-3);
+  font-size: 14px;
+  text-align: center;
+}
+</style>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <p class="eyebrow">Builder · Critic gauntlet — live</p>
+      <h1>Hexfield Gauntlet</h1>
+      <p class="headline" id="headline"></p>
+    </div>
+    <div class="stamps">
+      <div class="stamp live"><span class="k">Phase</span><span class="v" id="s-phase">—</span></div>
+      <div class="stamp"><span class="k">Round</span><span class="v" id="s-round">—</span></div>
+      <div class="stamp"><span class="k">Pieces won</span><span class="v" id="s-won">—</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <h2>The run</h2>
+    <div class="brief">
+      <div>
+        <p class="goal-text" id="goal"></p>
+      </div>
+      <div>
+        <ul class="bar-list" id="bar"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pieces <span class="count" id="pieces-count"></span></h2>
+    <div id="ledger-host"></div>
+  </section>
+
+  <section>
+    <h2>Rounds <span class="count">each cell is a critic verdict</span></h2>
+    <div id="matrix-host"></div>
+  </section>
+
+  <section>
+    <h2>Log <span class="count" id="log-count"></span></h2>
+    <ul class="log" id="log"></ul>
+  </section>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('run-data').textContent);
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  };
+
+  document.getElementById('headline').textContent = D.headline || '';
+  document.getElementById('goal').textContent = D.goal || '';
+  document.getElementById('s-phase').textContent = D.phase || '—';
+  document.getElementById('s-round').textContent = D.round == null ? '—' : D.round;
+
+  var pieces = D.pieces || [];
+  var won = pieces.filter(function (p) { return p.state === 'won'; }).length;
+  document.getElementById('s-won').textContent = pieces.length ? (won + '/' + pieces.length) : '—';
+  document.getElementById('pieces-count').textContent = pieces.length ? (pieces.length + ' tracked') : '';
+
+  document.getElementById('bar').innerHTML = (D.bar || [])
+    .map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('');
+
+  var STATE_CHIP = { won: 'pass', building: 'run', critiqued: 'rework', blocked: 'fail', queued: 'wait' };
+  var STATE_TEXT = { won: 'clears the bar', building: 'building', critiqued: 'in rework', blocked: 'blocked', queued: 'queued' };
+
+  var lh = document.getElementById('ledger-host');
+  if (!pieces.length) {
+    lh.innerHTML = '<div class="empty">Pieces are named once the contract brief lands.</div>';
+  } else {
+    lh.innerHTML = '<div class="ledger">' + pieces.map(function (p, i) {
+      var rounds = (p.rounds || []).map(function (r) {
+        return '<span class="chip ' + esc(r.verdict || 'wait') + '">R' + esc(r.n) + ' · ' + esc(r.label || r.verdict || '') + '</span>';
+      }).join('');
+      return '<div class="piece">'
+        + '<div class="idx">' + String(i + 1).padStart(2, '0') + '</div>'
+        + '<div class="nm">' + esc(p.name) + '</div>'
+        + '<span class="chip ' + (STATE_CHIP[p.state] || 'wait') + ' state">' + esc(STATE_TEXT[p.state] || p.state) + '</span>'
+        + (p.note ? '<div class="note">' + esc(p.note) + '</div>' : '')
+        + (rounds ? '<div class="rounds">' + rounds + '</div>' : '')
+        + '</div>';
+    }).join('') + '</div>';
+  }
+
+  var maxR = 0;
+  pieces.forEach(function (p) { (p.rounds || []).forEach(function (r) { if (r.n > maxR) maxR = r.n; }); });
+  var mh = document.getElementById('matrix-host');
+  if (!maxR) {
+    mh.innerHTML = '<div class="empty">The round matrix fills in as builders ship and critics rule.</div>';
+  } else {
+    var head = '<tr><th>Piece</th>';
+    for (var r = 1; r <= maxR; r++) head += '<th>R' + r + '</th>';
+    head += '</tr>';
+    var body = pieces.map(function (p) {
+      var row = '<tr><th>' + esc(p.name) + '</th>';
+      for (var r = 1; r <= maxR; r++) {
+        var hit = (p.rounds || []).filter(function (x) { return x.n === r; })[0];
+        row += '<td>' + (hit
+          ? '<span class="cell ' + esc(hit.verdict) + '" title="' + esc(hit.gap || '') + '">' + esc(hit.short || hit.verdict) + '</span>'
+          : '<span class="cell">·</span>') + '</td>';
+      }
+      return row + '</tr>';
+    }).join('');
+    mh.innerHTML = '<div class="matrix-scroll"><table class="matrix"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  var log = (D.log || []).slice().reverse();
+  document.getElementById('log-count').textContent = log.length + ' entries · newest first';
+  document.getElementById('log').innerHTML = log.map(function (e) {
+    return '<li><span class="t">' + esc(e.t) + '</span>'
+      + '<span class="kind" data-k="' + esc(e.kind) + '">' + esc(e.kind) + '</span>'
+      + '<span>' + esc(e.text) + '</span></li>';
+  }).join('');
+
+  document.getElementById('foot').textContent = 'Last update: ' + (D.updated || '');
+})();
+</script>

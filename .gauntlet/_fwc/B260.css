@@ -1,0 +1,4 @@
+/* B260 — track floor 260px + 28px boxes + roomier chips */
+.fx-two .editor-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { width: 28px !important; height: 28px !important; }
+.fx-two label:has(> input[type="checkbox"]), .fx-two label:has(> input[type="radio"]) { flex: 1 1 22rem; max-width: 23rem; }

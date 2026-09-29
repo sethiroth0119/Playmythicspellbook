@@ -1,0 +1,235 @@
+{
+ "run": "Forge Remodel Gauntlet",
+ "subtitle": "Remodelling the Mythic Spellbook card Forge — build, judge, send back, repeat.",
+ "updated": "paused · v121v77 shipped",
+ "chains": [
+  {
+   "id": "infra",
+   "label": "Contract + Harness",
+   "note": "Nothing else starts until these hold."
+  },
+  {
+   "id": "layout",
+   "label": "Editor Layout",
+   "note": "Width, field gating, the effect dropdown, the section index."
+  },
+  {
+   "id": "author",
+   "label": "Authoring Surfaces",
+   "note": "Status pickers, spell/trap bodies, move facets, the move editor."
+  },
+  {
+   "id": "effects",
+   "label": "New Effects",
+   "note": "Draw+discard, discard-from-drawn, and the void to deck trigger."
+  },
+  {
+   "id": "live",
+   "label": "Live Data",
+   "note": "Deck size 40 to 80, the per-deck Realm Deck. Real saved decks."
+  },
+  {
+   "id": "ship",
+   "label": "Ship",
+   "note": "Full gate, version knobs, edge verify."
+  }
+ ],
+ "decisions": [
+  {
+   "q": "Move control model",
+   "a": "Element, then Kind, then Damage type — three linked dropdowns, applied where moves are added to units in the Forge. Nothing existing breaks."
+  },
+  {
+   "q": "AI deck size at 40-80",
+   "a": "The AI matches the player's deck size. Closes the fatigue-race inversion on a paid game."
+  },
+  {
+   "q": "Does Realm 21 count toward the total",
+   "a": "No — separate, and it holds only Archon and Fusion units."
+  },
+  {
+   "q": "Realm ownership parity",
+   "a": "Must own the card, same as the main deck. And Archon/Fusion summons are Realm-only — barred from the main deck entirely."
+  }
+ ],
+ "rounds": [
+  {
+   "n": 0,
+   "title": "Recon and decomposition",
+   "state": "done",
+   "agents": 11,
+   "tokens": 1548031,
+   "what": "Six readers mapped the editor UI, the effect pipeline, the move and status data, the DECK_SIZE invariant, the Realm Deck and the test harness. A lead decomposed the goal; three critics attacked the decomposition and the lead revised it.",
+   "found": [
+    "Every editor-layout change is a LIVE-DATA change. captureEditorIntoCard reads the DOM with num(id,min,max,fallback) and 77 of those pass a literal fallback — remove a field from the DOM and the number is silently rewritten to a constant, then cloud-pushed to every owner. npm run check sees none of it.",
+    "The editor is 900px wide on every monitor. .card-editor{max-width:900px} at index.html:33891 still applies to .card-editor.fx-two — 343 fields in a two-column grid inside ~500px. The sprawl is one declaration.",
+    "Effect (c) has no event to fire on. There is exactly one void→deck movement in the engine, inside shuffleToDeck at index.html:111991, and its zone default was moved off void after an earlier hand-wipe bug. The trigger needs the effect built first or it can never fire.",
+    "renderForge is admin-gated and bounces silently. Every screenshot bar in the first plan would have photographed the title screen and reported success."
+   ],
+   "pieces": 23
+  },
+  {
+   "n": 1,
+   "title": "Infrastructure — build and judge",
+   "state": "done",
+   "agents": 9,
+   "tokens": 1214260,
+   "what": "Three builders, then two adversarial critics per piece, each required to run the artifact themselves rather than trust a claim.",
+   "results": [
+    {
+     "id": "forge-save-contract-net",
+     "verdict": "pass, with holes",
+     "detail": "356 ids derived at run time, 153 real cards round-tripped. Found a live bug in passing: playRequirement.minCost reads an id the editor never renders, so it is forced to 0 on every save."
+    },
+    {
+     "id": "forge-driver-harness",
+     "verdict": "pass, with holes",
+     "detail": "Reaches the real editor and hard-asserts it. A/B runs in a git worktree, never a stash."
+    },
+    {
+     "id": "data-backup-export",
+     "verdict": "pass, with holes",
+     "detail": "Export, restore and diff for the five structures the migrations rewrite."
+    }
+   ],
+   "found": [
+    "63 of the 417 ids the save path reads go through wrapper helpers the sweep did not recognise. A critic renamed ed-wall-attack and the gate stayed green.",
+    "forceOpen was measuring attachment, not un-hiding. Deleting the line that opens the sections did not change the number.",
+    "The backup tool's parser substituted {} on an unreadable profile — so it would back up nothing, and restore would then destroy the thing it was meant to save."
+   ]
+  },
+  {
+   "n": 2,
+   "title": "Infrastructure — hardening",
+   "state": "done",
+   "agents": 15,
+   "tokens": 2530021,
+   "what": "All three sent back with the critics' own mutants attached. The bar stopped being \"passes its own test\" and became \"catches the five mutants that slipped through, plus whatever the new critic invents.\"",
+   "results": [
+    {
+     "id": "forge-save-contract-net",
+     "verdict": "pass",
+     "detail": "Ids derived went 356 to 436 across 17 read forms — it found a helper the critics' own list of 14 had missed. Coverage is now per card type, taken from an instrumented copy of the real save function. Both critics invented fresh mutants using read forms nobody had named; all were caught."
+    },
+    {
+     "id": "forge-driver-harness",
+     "verdict": "FAILED",
+     "detail": "Critics got confident wrong numbers past it three ways. body{opacity:0} and a full-viewport overlay both reported 71 of 86 fields visible while the screenshot was 9KB of nothing. Its A/B path guard fell to a Windows extended-length path. And one clause went red because another agent's worktree was on the machine — the exact failure it was written to fix."
+    },
+    {
+     "id": "data-backup-export",
+     "verdict": "pass, hole open",
+     "detail": "The unreadable-source refusal only covers one input branch. A truncated profile arriving by another shape still backed up 3 of 5 structures and reported OK."
+    }
+   ],
+   "found": [
+    "A two-element SPELL loses its second element on every save. The save path reads ed-element2; the spell editor never renders it (index.html:150734 against :145953).",
+    "74 field paths can be saved but not re-rendered — set one, save, reopen, and the default comes back, and the next save writes the default over the real value.",
+    "The net now measures damage rather than absence: of 433 rendered ids, removing 241 of them changes the saved card."
+   ]
+  },
+  {
+   "n": 3,
+   "title": "Infrastructure — targeted repair",
+   "state": "done",
+   "what": "Not chasing exotic mutants further. Two narrow repairs only: give the harness a real paint check (elementFromPoint plus a screenshot byte floor, with the critics' own bypasses shipped as mutants that must go red), stop it asserting on machine-global state, and move the export tool's unreadable-source refusal to where structures are resolved rather than one input branch.",
+   "agents": 6,
+   "tokens": 1094385,
+   "results": [
+    {
+     "id": "forge-driver-harness",
+     "verdict": "pass",
+     "detail": "Paint gate added: elementFromPoint occlusion over 16 points plus every field it claims visible, checkVisibility with the opacity option, and a screenshot byte floor. On its FIRST run it caught a real one — bouncing off the admin gate renders the title screen, which opens an opaque full-viewport narrative overlay while every count stays green and the screenshot is 1.2MB of the story reel."
+    },
+    {
+     "id": "data-backup-export",
+     "verdict": "pass, one hole left",
+     "detail": "Refusal moved to where structures resolve. But memoryStore — the entry point the migrations will actually call — still had no guard. Being fixed alongside round 5."
+    }
+   ],
+   "found": [
+    "The A/B path guard fell to one idiomatic Windows spelling. path.toNamespacedPath gave base has-assets=true against head has-assets=false and the guard never saw the read. Every comparison now goes through one canonical path form.",
+    "Critics still got past the paint gate with deliberately adversarial CSS — a pointer-events:none overlay, and a stylesheet making all the editor ink transparent. Not failure modes a layout builder produces by accident, so the mitigation is that every layout critic must look at a real screenshot rather than only read numbers."
+   ]
+  },
+  {
+   "n": 4,
+   "title": "Live save-path bugfix",
+   "state": "done",
+   "what": "The contract net found three defects that are corrupting real cards right now, and index.html was otherwise idle. Fixing the spell second-element loss, the minCost clobber, and the class of round-trip data loss behind the 74 unrenderable paths. Governing rule: saving a card without touching anything must never change it.",
+   "agents": 3,
+   "tokens": 498277,
+   "results": [
+    {
+     "id": "live save-path defects",
+     "verdict": "fixed, verified",
+     "detail": "Two-element spells kept both elements (was dropping to one). vanishUnit minCost stays 5 (was forced to 0). Void-ability card filters and hand-authored onResurrect blocks survive a reopen. Unrenderable-but-written field paths went 74 to 0. Each proved by running the same check against the pre-change build first."
+    }
+   ],
+   "found": [
+    "The onResurrect bug was two stacked. The Auto-copy checkbox rendered checked for any card that merely HAD a resurrect block, so a deliberately different one was overwritten by a copy of on-play. Un-checking it alone would have been worse — one edit to on-play would have permanently diverged the card and silently stopped the mirror. The intent is now a flag and the copy runs last.",
+    "The mirror also ran about 380 lines BEFORE on-play was read, so it was copying the previous save.",
+    "The codebase already had the right idiom for this whole class — num(id, min, max, card.stats.hp || 20), preserve rather than re-read. The fix extends that rather than inventing a pattern."
+   ]
+  },
+  {
+   "n": 5,
+   "title": "The remodel begins — width, then gating",
+   "state": "done",
+   "what": "Editor width first: .card-editor{max-width:900px} still applies to the two-column layout, so the editor is 900px on every monitor — a 380px asset rail plus about 500px holding 343 fields at roughly 230px per column. That one declaration is the sprawl. Then per-effect field gating: 21 pickers labelled \"(when effect is X)\" currently render for every effect, across the primary block, five sibling blocks and six extra slots. Both judged against a legibility floor so density cannot be bought by shrinking the type, and both gated on the 153-card round trip.",
+   "agents": 13,
+   "tokens": 2863303,
+   "results": [
+    {
+     "id": "editor-width",
+     "verdict": "pass, 2 rounds",
+     "detail": "At 1600px the editor went 900px to 1549px and the properties column 22,109px to 14,876px — down 32.7%. Grid columns 2 (min 181px) to 3-4 (min 268px). Labels wrapping past two lines: 44 to 0. Controls under 28px tall: 38 to 0. Move editor and event editor still 900px, untouched."
+    },
+    {
+     "id": "effect-field-gating",
+     "verdict": "pass, 2 rounds",
+     "detail": "Across all 118 effect types the on-play block now shows only the fields that effect actually reads, checked against a whitelist computed independently from the save path. Hidden fields stay in the DOM, and the change handler re-runs the empty-section sweep and the nav-chip hider."
+    },
+    {
+     "id": "data-backup-export",
+     "verdict": "hole closed",
+     "detail": "The refusal moved into one resolve pass that every entry point inherits, including memoryStore — the one the migrations will actually call."
+    }
+   ],
+   "found": [
+    "The 32.7% is layout, not hiding. The panel text content is byte-identical before and after — same hash, same 290 fields, same font histogram at all four widths — so density was not bought by shrinking type.",
+    "grid-auto-flow:dense was rejected on purpose. It bought another 375px but reorders fields on screen while tab order stays in DOM order, and a card editor whose fields move about is a worse bug than a taller one. The reasoning is in the code.",
+    "A critic caught an undisclosed phone regression: the new sub-grid rule outranks the editor's own single-column rule below 600px, so a 340px track overflowed a narrower viewport. Fixed with min(340px,100%) and verified."
+   ]
+  },
+  {
+   "n": 6,
+   "title": "Authoring surfaces",
+   "state": "done",
+   "what": "Stopped at the owner's request before producing any change — verified: the effect groups, the dead section and the 14-id status list are all still as they were, so the four pieces are genuinely un-started rather than half-applied."
+  },
+  {
+   "n": 7,
+   "title": "Two reported bugs, then ship",
+   "state": "done",
+   "what": "Paused the remodel to fix two things the owner reported: the City Builder Treasury chip flicking between two numbers, and the Containment Lab being unable to produce a working cure. Both fixed, tested and shipped together with everything the run had completed, as v121v77.",
+   "results": [
+    {
+     "id": "cinder rate chip",
+     "verdict": "fixed, live",
+     "detail": "Both numbers were real. Rent is continuous, patronage is not — so the old line booked each lump as an instantaneous rate (x60) and contributed nothing in between. On a city truly making 18/min it printed 180, then 0, then 180. Now averaged over whole closed minutes, which is piecewise constant rather than merely damped, plus a band so the chip does not chase noise below its own precision."
+    },
+    {
+     "id": "containment lab cures",
+     "verdict": "fixed, live",
+     "detail": "Three defects at once. The blend is a weighted average, so every mix lands inside the convex hull of the reagents — and the 13 shipped reagents had no vertex in four corners the strain generator produces, making 7.8% of strains uncurable however well played. Twelve reagents added from the 142 the game now has: 7.8% to 0.8%. The SUGGEST button was a per-axis greedy that reached broad-spectrum 0.0% of the time and produced something worse than a cure 19.5% of the time; it is now a real solver that plans inside the player stock and reaches viable-or-better 100%. And every jar now shows what one more unit does to the vessel in front of you, ordered by what helps most."
+    }
+   ],
+   "found": [
+    "The cures file was built against \"RESOURCES (14 entries)\". It has 142. Medicine was being made out of wood, stone and cloth while the player's warehouse held acids, solvents, silica, herbs and medical chemicals — which is exactly what the owner said.",
+    "The first fix for the flicker was rejected by its own test: a decaying average still rippled 21.8 to 18.5 at one lump a minute, which on a one-decimal chip is still a number changing every second.",
+    "The deploy gate failed in a way that looked unrelated — three headless suites dying on \"Execution context was destroyed\". Cause: BUILD_VERSION was bumped but version.txt was not, so the app's own update-check decided a newer build was live and reloaded the page 500ms into every test. Recorded, and the handoff's advice on that corrected."
+   ]
+  }
+ ]
+}

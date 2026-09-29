@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JB Gauntlet Progress</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+            color: #ffffff;
+        }
+
+        .note {
+            font-size: 14px;
+            color: #a0a0a0;
+            font-style: italic;
+        }
+
+        .pieces-section {
+            margin-bottom: 50px;
+        }
+
+        .pieces-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #ffffff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .pieces-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+
+        .piece-card {
+            background-color: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 6px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .piece-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            line-height: 1.4;
+            color: #ffffff;
+        }
+
+        .piece-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .meta-label {
+            color: #808080;
+            font-weight: 500;
+        }
+
+        .meta-value {
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+
+        .round {
+            color: #60a5fa;
+        }
+
+        .verdict {
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-block;
+        }
+
+        .verdict-critiqued {
+            background-color: #4a3a2a;
+            color: #f5a623;
+        }
+
+        .verdict-won {
+            background-color: #2a4a2a;
+            color: #4ade80;
+        }
+
+        .verdict-blocked {
+            background-color: #4a2a2a;
+            color: #ef4444;
+        }
+
+        .verdict-unknown {
+            background-color: #2a3a4a;
+            color: #3b82f6;
+        }
+
+        .verdict-queued {
+            background-color: #3a3a3a;
+            color: #a0a0a0;
+        }
+
+        .gap {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #3a3a3a;
+            font-size: 11px;
+            color: #909090;
+        }
+
+        .gap-label {
+            color: #707070;
+            font-weight: 500;
+        }
+
+        .log-section {
+            margin-top: 40px;
+        }
+
+        .log-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #ffffff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .log-timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+
+        .log-entry {
+            position: relative;
+            margin-bottom: 16px;
+            padding: 8px 0;
+            font-size: 12px;
+        }
+
+        .log-entry::before {
+            content: '';
+            position: absolute;
+            left: -24px;
+            top: 8px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #60a5fa;
+            border: 2px solid #1a1a1a;
+        }
+
+        .log-entry-round {
+            color: #60a5fa;
+            font-weight: 600;
+        }
+
+        .log-entry-piece {
+            color: #e0e0e0;
+        }
+
+        .log-entry-verdict {
+            color: #a0a0a0;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Integration Pass Complete</h1>
+            <div class="note">Integration pass complete.</div>
+        </header>
+
+        <section class="pieces-section">
+            <div class="pieces-title">Current Pieces</div>
+            <div class="pieces-grid" id="piecesGrid"></div>
+        </section>
+
+        <section class="log-section">
+            <div class="log-title">Round Log</div>
+            <div class="log-timeline" id="logTimeline"></div>
+        </section>
+    </div>
+
+    <script>
+        const pieces = [
+            {"id":"vault-two-way","title":"Vault screen: the real corp vault, with card art, depositor, and a way out","round":3,"verdict":"critiqued","gap":""},
+            {"id":"treasury-real","title":"Kill every fabricated treasury number and point them all at the one real balance","round":3,"verdict":"critiqued","gap":""},
+            {"id":"member-cities","title":"Treasury: who is in the corp, what their city produces, and what it does not","round":3,"verdict":"critiqued","gap":""},
+            {"id":"jobs-smith-warehouse","title":"Warehouse Worker and Weapon Smith as hireable jobs, with the smith's output landing in the vault","round":3,"verdict":"critiqued","gap":""},
+            {"id":"guild-activity-mailbox","title":"Mailbox: a real guild activity feed built from logs that already exist","round":3,"verdict":"critiqued","gap":""},
+            {"id":"logistics-real","title":"Logistics: real shipments and convoys, and the units-vs-currency bug","round":3,"verdict":"critiqued","gap":""},
+            {"id":"guild-trade","title":"Trade window: real counterparty, real assets, real escrowed swap (new SQL, pending)","round":3,"verdict":"critiqued","gap":""}
+        ];
+
+        const roundLog = [
+            {"piece":"guild-activity-mailbox","round":1,"verdict":"unknown","gap":""},
+            {"piece":"treasury-real","round":1,"verdict":"unknown","gap":""},
+            {"piece":"logistics-real","round":1,"verdict":"unknown","gap":""},
+            {"piece":"jobs-smith-warehouse","round":1,"verdict":"unknown","gap":""},
+            {"piece":"member-cities","round":1,"verdict":"unknown","gap":""},
+            {"piece":"guild-trade","round":1,"verdict":"unknown","gap":""},
+            {"piece":"vault-two-way","round":1,"verdict":"unknown","gap":""},
+            {"piece":"member-cities","round":2,"verdict":"unknown","gap":""},
+            {"piece":"guild-activity-mailbox","round":2,"verdict":"unknown","gap":""},
+            {"piece":"jobs-smith-warehouse","round":2,"verdict":"unknown","gap":""},
+            {"piece":"vault-two-way","round":2,"verdict":"unknown","gap":""},
+            {"piece":"member-cities","round":3,"verdict":"unknown","gap":""},
+            {"piece":"logistics-real","round":2,"verdict":"unknown","gap":""},
+            {"piece":"treasury-real","round":2,"verdict":"unknown","gap":""},
+            {"piece":"guild-activity-mailbox","round":3,"verdict":"unknown","gap":""},
+            {"piece":"guild-trade","round":2,"verdict":"unknown","gap":""},
+            {"piece":"jobs-smith-warehouse","round":3,"verdict":"unknown","gap":""},
+            {"piece":"vault-two-way","round":3,"verdict":"unknown","gap":""},
+            {"piece":"treasury-real","round":3,"verdict":"unknown","gap":""},
+            {"piece":"guild-trade","round":3,"verdict":"unknown","gap":""},
+            {"piece":"logistics-real","round":3,"verdict":"unknown","gap":""}
+        ];
+
+        const piecesGrid = document.getElementById('piecesGrid');
+        pieces.forEach(piece => {
+            const verdictClass = 'verdict-' + piece.verdict;
+            const gapHtml = piece.gap ? '<div class="gap"><span class="gap-label">Gap:</span> ' + piece.gap + '</div>' : '';
+
+            const card = document.createElement('div');
+            card.className = 'piece-card';
+            card.innerHTML =
+                '<div class="piece-title">' + piece.title + '</div>' +
+                '<div class="piece-meta">' +
+                    '<div class="meta-row">' +
+                        '<span class="meta-label">Round</span>' +
+                        '<span class="meta-value round">' + piece.round + '</span>' +
+                    '</div>' +
+                    '<div class="meta-row">' +
+                        '<span class="meta-label">Status</span>' +
+                        '<span class="verdict ' + verdictClass + '">' + piece.verdict + '</span>' +
+                    '</div>' +
+                '</div>' +
+                gapHtml;
+            piecesGrid.appendChild(card);
+        });
+
+        const logTimeline = document.getElementById('logTimeline');
+        roundLog.forEach(entry => {
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML =
+                '<span class="log-entry-round">Round ' + entry.round + '</span>' +
+                '<span class="log-entry-piece">' + entry.piece + '</span>' +
+                '<span class="log-entry-verdict">(' + entry.verdict + ')</span>';
+            logTimeline.appendChild(logEntry);
+        });
+    </script>
+</body>
+</html>

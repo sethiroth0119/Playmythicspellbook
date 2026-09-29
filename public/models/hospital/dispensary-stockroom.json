@@ -1,0 +1,25 @@
+{
+  "file": "dispensary-stockroom.glb",
+  "bytes": 1863188,
+  "triangles": 36278,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.755,
+      -0.952,
+      -0.359
+    ],
+    "max": [
+      0.754,
+      0.95,
+      0.359
+    ]
+  },
+  "dims": {
+    "w": 1.51,
+    "h": 1.902,
+    "d": 0.718
+  },
+  "source": "assets-source/glb-masters/hospital/dispensary-stockroom.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

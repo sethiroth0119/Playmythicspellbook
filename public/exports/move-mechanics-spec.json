@@ -1,0 +1,385 @@
+{
+  "$comment": "Mythic Spellbook — move + ability mechanics reference. Every field a move can carry, with its semantics, allowed values, engine notes, and concrete in-game examples. Stable contract — engine reads these field names at runtime.",
+  "version": "1.0",
+  "generatedAt": "2026-05-26",
+
+  "baseMoveSchema": {
+    "id":       { "type": "string",  "required": true,  "desc": "Unique move id (camelCase). Used by learnsets, deck data, save files." },
+    "name":     { "type": "string",  "required": true,  "desc": "Display name shown to the player." },
+    "kind":     { "type": "enum",    "values": ["attack", "ability", "movement"], "required": true,
+                  "desc": "attack = deals damage + can apply status. ability = utility / heal / buff / debuff (no base damage roll). movement = repositioning move (teleport / grappling hook)." },
+    "type":     { "type": "enum",    "values": ["physical", "magic"], "appliesWhen": "kind=='attack'",
+                  "desc": "physical reads attacker.atk vs defender.def; magic reads attacker.mag vs defender.res. Spells should pass 'magic' so Immortal-passive lethal-clamps fire correctly." },
+    "power":    { "type": "int",     "default": 0,
+                  "desc": "Base damage power before stat math. For ability/heal moves leave at 0 (use healAmount/healPercent instead). For OHKO finishers set power=0 with effect='ohko'." },
+    "range":    { "type": "int",     "default": 1,
+                  "desc": "Chebyshev tile range from the attacker. range 0 = self-targeted. range 99 = global (used by teleport)." },
+    "cost":     { "type": "int",     "default": 0,
+                  "desc": "Energy cost paid at activation. Basic free attacks should be cost 0 + basic:true." },
+    "element":  { "type": "string",  "desc": "Move element ('fire' / 'water' / 'earth' / 'wind' / 'light' / 'shadow' / 'nature' / 'storm' / 'ice' / 'metal' / 'poison' / 'psychic' / 'arcane' / 'void' / 'blood' / 'crystal' / 'corruption' / 'spirit' / 'lava' / 'sound' / 'gravity' / 'neutral'). Drives type-effectiveness, weather bonuses, element wards." },
+    "accuracy": { "type": "int",     "default": 100, "min": 1, "max": 100,
+                  "desc": "% chance to hit. Below 100 the engine rolls a miss check. Status-only abilities use this too." },
+    "crit":     { "type": "int",     "default": 0, "min": 0, "max": 100,
+                  "desc": "Bonus crit chance % on top of the global baseline. Set 0 explicitly on OHKO moves to suppress crit." },
+    "target":   { "type": "enum",    "values": ["self", "ally", "allAllies", "enemy", "allEnemies", "tile"],
+                  "desc": "Ability targeting. Attacks use the active selection UI instead." },
+    "basic":    { "type": "boolean", "desc": "Marks the free no-cost basic attacks (slash / quickJab / bite). Used by the AI to pick fallback moves when energy is low." },
+    "desc":     { "type": "string",  "required": true, "desc": "Player-facing description shown in tooltips + the moves admin list." },
+    "icon":     { "type": "emoji",   "desc": "Optional inline icon override (used by the Fly/Dig/Realm family). Falls back to the element icon when absent." },
+    "air":      { "type": "boolean", "desc": "Marks moves whose CASTING posture is airborne (Sky Dive, Storm Wing, Rift Step, Void Lance). Combined with vanish:true and chargeTurns:1." }
+  },
+
+  "applyStatus": {
+    "$comment": "Single-status hook. Fires AFTER damage resolution. The id MUST match an entry in STATUS_EFFECTS. Set chance=100 for a guaranteed application.",
+    "schema": {
+      "applyStatus": {
+        "id":       "<STATUS_EFFECTS id>",
+        "chance":   "1..100 (% — engine rolls per target)",
+        "duration": "1..N turns the status persists"
+      }
+    },
+    "validStatusIds": [
+      "burn", "poison", "bleed", "frozen", "sleep", "stun", "slow", "haste",
+      "confusion", "paralysis", "siphoned", "weak", "strong", "shielded",
+      "focused", "assisted", "stumble", "rage", "blessed", "cursed",
+      "empowered", "disarmed", "blinded", "berserk", "burningRes",
+      "toxic", "doom", "mirror", "reraise", "spectralHaze", "protected",
+      "countering", "happy", "followLead", "infected",
+      "ambushGuard1", "ambushGuard3", "hexed", "frostbite", "vulnerable"
+    ],
+    "examples": {
+      "fireball":   { "applyStatus": { "id": "burn",   "chance": 30,  "duration": 2 } },
+      "bash":       { "applyStatus": { "id": "stun",   "chance": 60,  "duration": 1 } },
+      "poisonSting":{ "applyStatus": { "id": "poison", "chance": 100, "duration": 3 } }
+    },
+    "extra": {
+      "applyStatuses": {
+        "$comment": "OPTIONAL second array of statuses to apply in addition to applyStatus. Each entry has the same {id, chance, duration} shape. Used when a single move imposes TWO statuses (e.g. Siphon Grasp does Siphoned + Stun).",
+        "example": {
+          "frostNail": {
+            "applyStatus":   { "id": "frozen", "chance": 25, "duration": 1 },
+            "applyStatuses": [{ "id": "slow",  "chance": 70, "duration": 2 }]
+          }
+        }
+      }
+    }
+  },
+
+  "vanishStrike": {
+    "$comment": "🪶 Fly / ⛏ Dig / 🌌 Realm — two-turn vanish-and-return strikes. Turn 1: unit goes off-board, untargetable (but its tile stays blocked). Turn 2: returns and strikes the locked target. Built on the charge-move engine — set chargeTurns: 1 AND vanish: true together.",
+    "schema": {
+      "chargeTurns": "int (always 1 for the standard vanish family)",
+      "vanish":      "boolean — toggles the untargetable / hidden state during the charge turn",
+      "vanishKind":  "'fly' | 'dig' | 'realm' — drives the VFX (sprite goes up into the sky / down into the ground / sideways into a rift)",
+      "air":         "boolean — set true only on fly+realm so anti-air interactions read correctly"
+    },
+    "engineNotes": [
+      "While vanish is active, ALL targeting checks against the unit return false — no spells, no overwatch, no AoE damage.",
+      "The unit's tile stays blocked so opponents can't walk through where it was.",
+      "If the original target dies BEFORE the strike lands, the engine retargets to the nearest enemy in range (so the cast doesn't fizzle).",
+      "Damage on the return strike uses the move's full power — vanish gives no extra multiplier, just temporary invulnerability."
+    ],
+    "examples": {
+      "flyStrike":   { "kind": "attack", "type": "physical", "power": 78, "range": 3, "cost": 2, "element": "wind",  "air": true, "chargeTurns": 1, "vanish": true, "vanishKind": "fly",   "icon": "🪶" },
+      "flyStorm":    { "kind": "attack", "type": "magic",    "power": 80, "range": 3, "cost": 2, "element": "storm", "air": true, "chargeTurns": 1, "vanish": true, "vanishKind": "fly",   "icon": "🌪️" },
+      "digStrike":   { "kind": "attack", "type": "physical", "power": 80, "range": 2, "cost": 2, "element": "earth", "chargeTurns": 1, "vanish": true, "vanishKind": "dig", "icon": "⛏️" },
+      "digQuake":    { "kind": "attack", "type": "magic",    "power": 82, "range": 2, "cost": 2, "element": "earth", "chargeTurns": 1, "vanish": true, "vanishKind": "dig", "icon": "🌋" },
+      "realmStrike": { "kind": "attack", "type": "physical", "power": 84, "range": 3, "cost": 3, "element": "void",   "air": true, "chargeTurns": 1, "vanish": true, "vanishKind": "realm", "icon": "🌌" },
+      "realmWarp":   { "kind": "attack", "type": "magic",    "power": 86, "range": 3, "cost": 3, "element": "arcane", "air": true, "chargeTurns": 1, "vanish": true, "vanishKind": "realm", "icon": "🔮" }
+    }
+  },
+
+  "elementalReactiveShield": {
+    "$comment": "Reactive shields live on ARMOR items (slotType:'armor'), not on moves. When the wearer is HIT by an attack of the matching damage type, the attacker suffers the configured status. Equip via the Loadout screen → Armor slot.",
+    "schema": {
+      "slotType":            "'armor' (required to surface in the Loadout armor slot)",
+      "stats":               "{ def: int, res: int, spd: int, hp: int } — flat stat block applied while equipped",
+      "hpMod":               "int — extra HP bonus on top of stats.hp",
+      "damageReduction":     "int — % flat reduction on incoming PHYSICAL damage",
+      "damageReductionMagic":"int — % flat reduction on incoming MAGIC damage",
+      "thornsReflect":       "int — % of physical damage reflected back to the attacker (separate from the Thorns passive)",
+      "reactStatus": {
+        "id":       "STATUS_EFFECTS id (burn / frostbite / stun / poison / weak / hexed / slow / etc.)",
+        "duration": "turns",
+        "chance":   "1..100 (% to proc per hit)",
+        "vs":       "'physical' | 'magic' | 'any' — gates whether the proc fires on this hit type"
+      }
+    },
+    "examples": {
+      "stormShield":   { "slotType": "armor", "stats": { "def": 4 }, "hpMod": 5,  "damageReduction": 8,  "reactStatus": { "id": "stun",      "duration": 1, "chance": 65, "vs": "physical" } },
+      "emberAegis":    { "slotType": "armor", "stats": { "def": 4 }, "hpMod": 5,  "damageReduction": 8,  "reactStatus": { "id": "burn",      "duration": 3, "chance": 100, "vs": "physical" } },
+      "frostAegis":    { "slotType": "armor", "stats": { "def": 4 }, "hpMod": 5,  "damageReduction": 8,  "reactStatus": { "id": "frostbite", "duration": 3, "chance": 100, "vs": "physical" } },
+      "thornVest":     { "slotType": "armor", "stats": { "def": 3, "res": 3 }, "hpMod": 6, "damageReduction": 10, "thornsReflect": 25, "reactStatus": { "id": "poison", "duration": 3, "chance": 100, "vs": "any" } },
+      "voidMantle":    { "slotType": "armor", "stats": { "res": 5 }, "hpMod": 4,  "damageReductionMagic": 10, "reactStatus": { "id": "hexed",   "duration": 3, "chance": 100, "vs": "magic" } },
+      "stoneCarapace": { "slotType": "armor", "stats": { "def": 6, "spd": -1 }, "hpMod": 10, "damageReduction": 15, "reactStatus": { "id": "slow", "duration": 2, "chance": 100, "vs": "physical" } },
+      "mirrorVeil":    { "slotType": "armor", "stats": { "res": 4 }, "hpMod": 3,  "damageReductionMagic": 12, "reactStatus": { "id": "weak",    "duration": 3, "chance": 80, "vs": "magic" } }
+    }
+  },
+
+  "searchDeckOnPlay": {
+    "$comment": "Search Deck is an ON-PLAY effect (lives on the card's onPlay block), not a move. When the unit/hero enters play, the OWNER browses their deck for a card and adds it to their hand. Player gets an interactive picker modal; the AI auto-selects the best match for its archetype.",
+    "schema": {
+      "onPlay.type":              "'searchDeck'",
+      "onPlay.searchDeckType":    "'any' | 'unit' | 'hero' | 'summon' | 'spell' | 'trap' | 'location' | 'weather' | 'wall' | 'counter' — type filter for the picker. Ignored when searchDeckCardIds is non-empty.",
+      "onPlay.searchDeckCardIds": "string[] (optional allow-list of card ids) — restricts the picker to ONLY these cards. Overrides searchDeckType. Use for archetype-specific tutoring (e.g. 'pick one of these three combo pieces')."
+    },
+    "engineNotes": [
+      "Fires the instant the card hits the field (post weather-summoner, pre Kalon-on-enter).",
+      "If the deck doesn't contain any matching card, the effect logs a 'no targets' line and does nothing.",
+      "The found card is added to the END of the hand. If the hand is at cap, the search consumes the find anyway (matches the 'tutor + draw at cap = wasted draw' convention from major TCGs).",
+      "Multiplayer: the search modal blocks until the player picks; the opponent sees a 'searching deck…' overlay.",
+      "AI scoring: picks the highest-energy unit + on-play AOE first, then high-damage spells, then heals when low HP, then defensive walls/traps."
+    ],
+    "examples": {
+      "broadTutor":     { "onPlay": { "type": "searchDeck", "searchDeckType": "any" } },
+      "spellTutor":     { "onPlay": { "type": "searchDeck", "searchDeckType": "spell" } },
+      "specificCombo":  { "onPlay": { "type": "searchDeck", "searchDeckType": "any",
+                                       "searchDeckCardIds": ["cc_powerBlade","cc_runedShield","cc_finishingBlow"] } }
+    }
+  },
+
+  "bonusDamageModifiers": {
+    "$comment": "Per-move damage tweaks that fire INSIDE calculateDamage. Each is optional; multiple can stack on the same move. Multipliers are MULTIPLICATIVE with each other (so two +50% sources = ×2.25, not ×2).",
+    "fields": {
+      "bonusIfAllyAdjacent": {
+        "type": "float (e.g. 0.5 = +50%)",
+        "desc": "Extra damage when at least one friendly unit is adjacent to the TARGET. Used by Flanking Strike. Stacks with the Sneak Attack passive.",
+        "example": { "sneakAttack": { "power": 26, "bonusIfAllyAdjacent": 0.5 } }
+      },
+      "effect": {
+        "type": "enum",
+        "values": ["pierce", "drain", "aoe", "ohko"],
+        "desc": "Special damage mode flags. 'pierce' = ignores 50% of defender DEF/RES. 'drain' = attacker heals 50% of damage dealt. 'aoe' = use with aoeRadius + splashDamagePct. 'ohko' = LANDING zeros target HP — must pair with low accuracy.",
+        "examples": {
+          "pierce": { "power": 32, "effect": "pierce" },
+          "drainLife": { "power": 22, "effect": "drain" },
+          "deathStrike": { "power": 0, "accuracy": 30, "crit": 0, "effect": "ohko" }
+        }
+      },
+      "aoeRadius": { "type": "int", "desc": "Chebyshev radius for splash. Set with splashDamagePct. Hits ALL units (friend + foe) in radius around the target." },
+      "splashDamagePct": { "type": "float (0..1)", "desc": "Damage multiplier for splash targets. 0.75 = splash hits take 75% of the main hit." },
+      "laneDepth": { "type": "int", "desc": "Lane attacks — depth in rows hit in the column directly in front of the attacker. Pair with splashDamagePct.", "example": { "frontalSweep": { "power": 22, "laneDepth": 3, "splashDamagePct": 0.7 } } },
+      "knockback": { "type": "int (tiles)", "desc": "Pushes the target AWAY from the attacker by N tiles. Walls / units / map edges stop the push.", "example": { "gust": { "power": 18, "knockback": 2 } } },
+      "pull":      { "type": "int (tiles)", "desc": "Pulls the target TOWARD the attacker by N tiles. Mirror of knockback.", "example": { "harpoonYank": { "power": 22, "pull": 2 } } },
+      "selfDamagePct": { "type": "float (0..1)", "desc": "Pay N% of CURRENT HP to use the move. Pairs with Belly Drum / Substitute / Self-detonate.", "example": { "bellyDrum": { "selfDamagePct": 0.5 } } },
+      "selfDetonate": { "type": "boolean", "desc": "Move ALWAYS KOs the user. Damage to target = 99% (100% if user is hurt) of user's max HP.", "example": { "selfDetonate": { "selfDetonate": true } } },
+      "chargeTurns": { "type": "int", "desc": "Two-turn move. Turn 1 charges (visible windup), turn 2 fires. Combine with sunCharge (free fire under ☀ Sun) and/or vanish (untargetable while charging)." },
+      "sunCharge": { "type": "boolean", "desc": "Move that has chargeTurns also fires INSTANTLY (no charge turn) while ☀ Sun weather is active.", "example": { "solarBeam": { "power": 90, "chargeTurns": 1, "sunCharge": true } } },
+      "sunBoost":  { "type": "boolean", "desc": "Heal moves double their healPercent under ☀ Sun.", "example": { "synthesis": { "healPercent": 0.25, "sunBoost": true } } },
+      "gainEnergy": { "type": "int", "desc": "Energy refunded to the user on a successful hit. Used by Harvest Soul to repay 1 of its 5 cost on a kill." }
+    },
+    "weatherBoosts": {
+      "$comment": "Element + weather match-ups already baked into the engine. Triggered automatically — NOT a move flag. Listed here for authoring reference.",
+      "sun":            { "fire": 1.5,   "water": 0.5 },
+      "rain":           { "water": 1.5,  "fire": 0.5, "metalDefBuff": 1.3 },
+      "lightningStorm": { "storm": 1.5,  "water": 1.5, "stormVsWater": 2.0 },
+      "eclipse":        { "shadow": 1.5, "light": 0.5 },
+      "mindRealm":      { "magic": 1.3 }
+    },
+    "typeChartBoosts": {
+      "$comment": "Element vs element multipliers (TYPE_CHART). Listed by STRONG_VS. Engine applies 2.0 / 0.5 / 1.0 automatically based on attacker.element vs defender.elements.",
+      "example": "fire 2.0 vs nature/wind/ice/metal; water 0.5 vs fire (because fire strong vs water)."
+    }
+  },
+
+  "paintSurface": {
+    "$comment": "🌋 Surface-painting moves lay battlefield hazards on tiles. Surfaces persist for `turns` rounds and interact: oil ignites when fire lands on it, water electrifies during storms, etc. Engine reads card.paintSurface on attack resolution.",
+    "schema": {
+      "paintSurface.type":   "'oil' | 'fire' | 'water' | 'glass' | 'mud' | 'ice' | 'blood' | etc. (entries in SURFACE_TYPES)",
+      "paintSurface.radius": "int — tiles around the target tile that get coated. 0 = single tile, 1 = 3×3, 2 = 5×5.",
+      "paintSurface.turns":  "int — how many turns the surface persists before fading. Most surfaces tick down 1/turn."
+    },
+    "engineNotes": [
+      "Painting is ADDITIVE — painting Oil on a tile that already has Fire ignites the oil immediately.",
+      "Water + Storm-element move on the same tile electrifies the entire water patch.",
+      "Fire on a Walls or Trees tile burns the structure for 5/turn until destroyed.",
+      "Units with the surfaceWalker passive clear the tile they STEP onto (immune + cleanse).",
+      "Surfaces don't damage the unit on entry — they tick on the unit's turn START (so a fresh painted tile gives the target one turn to escape)."
+    ],
+    "examples": {
+      "oilSlick":  { "power": 8,  "paintSurface": { "type": "oil",   "radius": 1, "turns": 6 } },
+      "emberToss": { "power": 16, "paintSurface": { "type": "fire",  "radius": 0, "turns": 4 } },
+      "tidePool":  { "power": 12, "paintSurface": { "type": "water", "radius": 1, "turns": 6 } }
+    }
+  },
+
+  "stageMods": {
+    "$comment": "Pokemon-style stat-stage system. Each stage shifts the unit's effective stat by ~50% (cap +6 / floor -6). Stages PERSIST through the entire match (unlike status effects which expire on duration). Stages decay only when the unit is KO'd / leaves the field. Use stage mods for permanent buffs / debuffs that should outlast a normal status duration.",
+    "schema": {
+      "stageMods": "array of { stat: 'atk'|'def'|'mag'|'res'|'spd', delta: int (-2..+2) } — one move can shift multiple stats at once"
+    },
+    "engineNotes": [
+      "Stage formula (Pokemon-equivalent): mult = (2 + clamp(stage,-6,6)) / 2 for positives, 2 / (2 - clamp) for negatives.",
+      "Cleanse abilities clear ALL non-permanent status BUT do NOT reset stage mods.",
+      "Stage mods stack with applyStatus — a move can grant 'strong' (+4 ATK status) AND atk +2 stage simultaneously.",
+      "Stages are tracked per-unit in unit.stages = { atk: 0, def: 0, mag: 0, res: 0, spd: 0 }. They never go below -6 or above +6."
+    ],
+    "examples": {
+      "tailWhip":    { "kind": "ability", "stageMods": [{ "stat": "def", "delta": -1 }] },
+      "leer":        { "kind": "ability", "stageMods": [{ "stat": "def", "delta": -1 }] },
+      "growl":       { "kind": "ability", "stageMods": [{ "stat": "atk", "delta": -1 }] },
+      "swordDance":  { "kind": "ability", "stageMods": [{ "stat": "atk", "delta": 2 }] },
+      "ironDefense": { "kind": "ability", "stageMods": [{ "stat": "def", "delta": 2 }] },
+      "calmMind":    { "kind": "ability", "stageMods": [{ "stat": "mag", "delta": 1 }, { "stat": "res", "delta": 1 }] },
+      "agility":     { "kind": "ability", "stageMods": [{ "stat": "spd", "delta": 1 }], "applyStatus": { "id": "haste", "chance": 100, "duration": 2 } },
+      "miredCurse":  { "kind": "ability", "stageMods": [{ "stat": "spd", "delta": -1 }], "applyStatus": { "id": "slow", "chance": 100, "duration": 3 } }
+    }
+  },
+
+  "healing": {
+    "$comment": "Heal moves use one of two systems: healAmount (flat HP) or healPercent (% of target's maxHp). Cleanse moves also live here. Heal moves are ALWAYS kind:'ability'.",
+    "fields": {
+      "healAmount":  { "type": "int",   "desc": "Restore this many HP to the target." },
+      "healPercent": { "type": "float", "desc": "Restore this % of target's MAX HP (0.5 = half max HP)." },
+      "cleanse":     { "type": "boolean", "desc": "Removes all non-permanent status effects from the target." },
+      "sunBoost":    { "type": "boolean", "desc": "Doubles healPercent during ☀ Sun weather." }
+    },
+    "examples": {
+      "heal":       { "kind": "ability", "target": "ally", "healAmount": 18 },
+      "recover":    { "kind": "ability", "target": "self", "healPercent": 0.5 },
+      "softBoil":   { "kind": "ability", "target": "ally", "healPercent": 0.5 },
+      "synthesis":  { "kind": "ability", "target": "self", "healPercent": 0.25, "sunBoost": true },
+      "wish":       { "kind": "ability", "target": "ally", "healAmount": 35 },
+      "healingWord":{ "kind": "ability", "target": "ally", "healAmount": 10, "cost": 0 },
+      "cleanse":    { "kind": "ability", "target": "ally", "cleanse": true }
+    }
+  },
+
+  "setupMoves": {
+    "$comment": "Field-state-changing moves: traps, weather, location removal, weather removal. Each fires the listed action when activated.",
+    "fields": {
+      "setsTrap":       { "schema": "{ cardId: <trap card id>, placement: 'self' | 'adjacent' | 'tile' }",
+                          "desc": "Places a trap card on a tile when the move resolves.",
+                          "examples": {
+                            "setSnare":   { "setsTrap": { "cardId": "snare",      "placement": "self" } },
+                            "laySpikes":  { "setsTrap": { "cardId": "spikes",     "placement": "self" } },
+                            "layInferno": { "setsTrap": { "cardId": "flameBurst", "placement": "self" } }
+                          } },
+      "setsWeather":    { "schema": "{ weatherType: <id>, duration: <turns>, name: <display> }",
+                          "desc": "Summons a weather card matching the supplied weatherType.",
+                          "examples": {
+                            "rainDance":     { "setsWeather": { "weatherType": "rain",      "duration": 4, "name": "Rainstorm" } },
+                            "sunnyDay":      { "setsWeather": { "weatherType": "sun",       "duration": 4, "name": "Sunny Day" } },
+                            "sandstormCall": { "setsWeather": { "weatherType": "sand",      "duration": 4, "name": "Sandstorm" } },
+                            "mistmaker":     { "setsWeather": { "weatherType": "mist",      "duration": 4, "name": "Mistveil" } },
+                            "eclipseRite":   { "setsWeather": { "weatherType": "eclipse",   "duration": 4, "name": "Eclipse" } },
+                            "bloodmoonRite": { "setsWeather": { "weatherType": "bloodmoon", "duration": 4, "name": "Bloodmoon" } },
+                            "mindWarp":      { "setsWeather": { "weatherType": "mindRealm", "duration": 4, "name": "Mind Realm" } }
+                          } },
+      "destroysLocation": { "type": "boolean", "desc": "Shatters the active Location field card.", "example": { "erosion": { "destroysLocation": true } } },
+      "clearsWeather":  { "type": "boolean", "desc": "Ends any active weather.", "example": { "disperse": { "clearsWeather": true } } },
+      "clearsTraps":    { "schema": "{ clearsTraps: true, clearsTrapsRadius: <int — 0 = whole board> }",
+                          "desc": "Disarms enemy traps in the given radius.",
+                          "examples": {
+                            "disarmSweep": { "clearsTraps": true, "clearsTrapsRadius": 2 },
+                            "greatPurge":  { "clearsTraps": true, "clearsTrapsRadius": 0 }
+                          } },
+      "revealsTraps":   { "type": "boolean", "desc": "Marks every enemy trap face-up for the rest of the match (doesn't disarm).", "example": { "reconPulse": { "revealsTraps": true } } },
+      "smashesWalls":   { "schema": "{ smashesWalls: true, smashesWallsRadius: <int> }",
+                          "desc": "Destroys enemy walls in the given radius.",
+                          "examples": {
+                            "wreckingSwing": { "smashesWalls": true, "smashesWallsRadius": 1 },
+                            "shatterStrike": { "smashesWalls": true, "smashesWallsRadius": 2 }
+                          } },
+      "clearsSurfaces": { "schema": "{ clearsSurfaces: true, clearsSurfacesRadius: <int> }",
+                          "desc": "Wipes painted surfaces (oil / fire / water / mud / glass) in radius.",
+                          "examples": {
+                            "cleansingStomp": { "clearsSurfaces": true, "clearsSurfacesRadius": 1 },
+                            "purifyingRing":  { "clearsSurfaces": true, "clearsSurfacesRadius": 3 }
+                          } }
+    }
+  },
+
+  "scanReveal": {
+    "$comment": "Reveal moves uncover enemy unit/hero details (type, faction, element, passives, moves, full stats) in the unit-detail modal. Marks persist for the whole match.",
+    "fields": {
+      "scansTarget":     { "type": "boolean", "desc": "Single-target scan via target='enemy'. Example: scanShot." },
+      "scansAllEnemies": { "type": "boolean", "desc": "AoE scan. Pair with scansRadius (0 = whole board, N = Chebyshev radius from caster)." },
+      "scansRadius":     { "type": "int",     "desc": "Radius for scansAllEnemies. 0 means board-wide." }
+    },
+    "examples": {
+      "scanShot":          { "range": 4, "cost": 1, "scansTarget": true },
+      "reconWave":         { "range": 0, "cost": 2, "scansAllEnemies": true, "scansRadius": 3 },
+      "totalSurveillance": { "range": 0, "cost": 3, "scansAllEnemies": true, "scansRadius": 0 }
+    }
+  },
+
+  "movement": {
+    "$comment": "Movement moves (kind:'movement') reposition the user. teleport=true skips pathing entirely; freeAction=true means the move does NOT consume the turn's move action.",
+    "fields": {
+      "teleport":   { "type": "boolean", "desc": "Warps to any empty tile within range (range:99 = anywhere)." },
+      "freeAction": { "type": "boolean", "desc": "Doesn't consume the unit's move action. Combine with cost > 0 for an 'extra step' move." }
+    },
+    "examples": {
+      "teleport":      { "kind": "movement", "range": 99, "cost": 2, "teleport": true },
+      "grapplingHook": { "kind": "movement", "range": 4,  "cost": 1, "teleport": true, "freeAction": true }
+    }
+  },
+
+  "statusEffects_RefIndex": {
+    "$comment": "Quick lookup table of every status id valid in applyStatus / applyStatuses. Engine reads STATUS_EFFECTS[id] for the actual stat modifiers.",
+    "damageDoT": {
+      "burn":     "🔥 +3..5 fire damage per turn (2-3t). Immunities: fire element.",
+      "poison":   "☠ +2..4 nature damage per turn (3t). Immunities: nature, metal, poison elements.",
+      "bleed":    "🩸 +2..3 physical damage per turn (2t). Immunities: earth, metal, void, blood, spirit elements.",
+      "toxic":    "☢ RAMPING — +N×3 damage per turn (dmgMin=3, escalating). Hits 3/6/9/12 across 4 turns.",
+      "frostbite":"❄️ +3 ice damage per turn (3t)."
+    },
+    "controlSkip": {
+      "stun":       "💫 Skips turn (1t).",
+      "frozen":     "❄ Skips turn (2t); cleanseable by fire moves.",
+      "sleep":      "💤 Skips turn (3t) with 35% wake chance each turn.",
+      "paralysis":  "⚡ -1 SPD + 25% chance to skip turn.",
+      "confusion":  "💫 50% chance per move to hit a random target (3t).",
+      "stumble":    "😵 Skips next turn (1t) — flinch.",
+      "rage":       "😡 Must attack nearest enemy / can only use attack moves. +3 ATK, -2 DEF.",
+      "berserk":    "😤 Must attack nearest. +6 ATK, -5 DEF.",
+      "blinded":    "🌫 -2 ATK + 40% chance to fumble each action.",
+      "spectralHaze":"👻 All attacks the target makes auto-miss for 3 turns. Pure denial."
+    },
+    "buffPositive": {
+      "strong":   "💪 +4 ATK (2t).",
+      "haste":    "💨 +1 SPD / +1 movement (2t).",
+      "shielded": "🛡 Blocks first incoming hit (2t).",
+      "focused":  "🎯 +4 MAG (2t).",
+      "blessed":  "🙏 +3 ATK/MAG/DEF/RES (2t).",
+      "assisted": "🤝 +6 ATK/MAG for NEXT strike only.",
+      "empowered":"✊ +4 ATK/MAG (3t).",
+      "protected":"🛡 Immune to ALL damage + status (1t cycle).",
+      "countering":"⚔ Counter next attack for 80% of own offense.",
+      "mirror":   "🪞 50% dodge chance (2t).",
+      "reraise":  "✨ First KO within 5t revives at 50% HP."
+    },
+    "debuffNegative": {
+      "weak":     "💔 -3 ATK (2t).",
+      "slow":     "🐌 -1 SPD / shorter attack range (2t).",
+      "siphoned": "🩸 Drains 3..6 HP per turn → attacker heals (4t).",
+      "cursed":   "💀 -3 ATK/MAG/DEF/RES (2t).",
+      "disarmed": "🗡 -7 ATK (3t).",
+      "hexed":    "✨ Negative aura — varies by source.",
+      "infected": "🦠 Halves all stats (3t)."
+    },
+    "doomFinish": {
+      "doom":     "⌛ koOnExpire: when timer hits 0, unit dies. Cleanseable. Example: doomMove fires 3-turn doom."
+    },
+    "special": {
+      "happy":         "😊 Cannot attack the source unit (3t). Other targets unaffected.",
+      "followLead":    "🪡 Can only move TOWARD the source + cannot attack at all (2t).",
+      "ambushGuard1":  "🎯 Watch stance. First enemy that moves adjacent (1 tile) eats a free reaction strike. Re-cast after firing.",
+      "ambushGuard3":  "🎯 Long watch. Same as above with radius 3.",
+      "burningRes":    "🔥 Risen in flame — +4 ATK/MAG while burning. Used by Phoenix Rebirth allies.",
+      "vulnerable":    "🎯 Multiplies incoming damage. Set by Weak Point Scan etc. (read by computeDamage as damageTakenMult)."
+    }
+  },
+
+  "buildYourOwnMove_Checklist": [
+    "Pick kind: attack / ability / movement.",
+    "If attack: set type (physical/magic), power, applyStatus (optional).",
+    "If ability: target ('self', 'ally', 'allAllies', 'enemy', 'allEnemies'), pick effect (heal*, applyStatus, stageMods, setsTrap, setsWeather, clearsWeather, scansTarget, …).",
+    "Set element so type-effectiveness + weather bonuses + element-ward immunities all behave naturally.",
+    "Cost should match power: 0 cost for basic; 1 for chip; 2 for moderate; 3-5 for finishers.",
+    "If chargeTurns > 0, decide if vanish, sunCharge, or air apply.",
+    "If the move imposes statuses, validate the id is in STATUS_EFFECTS — otherwise the entry is dropped silently.",
+    "Add a player-facing desc — the admin moves list shows this verbatim."
+  ]
+}

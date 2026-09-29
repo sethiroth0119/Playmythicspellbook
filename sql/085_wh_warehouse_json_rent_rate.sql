@@ -1,0 +1,15 @@
+-- 085 · The warehouse payload carries its own rental rate.
+--
+-- wh_set_rent_rate has been live since 084, but nothing could SHOW the current
+-- price: an owner had no way to see what they were charging and a renter no way
+-- to compare warehouses before renting. wh_warehouse_json now returns
+--   warehouse.rent_cinder_per_day   what a bay here costs per day
+--   warehouse.rent_rate_is_custom   true if the owner set it, false = default
+--
+-- ⚠ NOT GATED BEHIND v_is_owner, deliberately. A price the customer cannot see
+--   is not a price — the renter standing at the terminal is the one paying it.
+--   Everything genuinely private in this payload (owner_id, other renters'
+--   contents and weights) keeps its existing gate.
+--
+-- Applied 2026-08-30. Drives the "💰 Bay rental prices" screen on the
+-- Workstation in public/warehouse/index.html.

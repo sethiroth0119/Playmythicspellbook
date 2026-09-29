@@ -1,0 +1,123 @@
+/* ============================================================================
+   r1_frames.css — ROUND 1: board-sprite FRAME SIZING + ANCHORING
+   Appended LAST; wins on source order (plus the two !important answers noted
+   below, which are unavoidable — the rules it must beat are !important too).
+
+   SCOPE: frame sizing and footing only. This file does not touch
+   @keyframes unit-idle-breathe, frame cadence, DEFAULT_SPRITE_FRAME_MS, or
+   anything else the idle-animation layer owns.
+   ----------------------------------------------------------------------------
+   WHAT WAS MEASURED (real published sprites, public-catalog/sprites-0.json,
+   PNG IHDR headers read over HTTP Range — no decode):
+
+     225 published idle animations with 2+ frames
+     158 (70%) — every frame shares ONE canvas size   → these already run smooth
+      67 (30%) — canvas size CHANGES frame to frame   → these are the bug
+     worst: k_cc_1778614553787  75x96 · 153x103 · 153x113 · 112x81 · 125x77
+            (aspect-ratio spread 108%; median across the 67 bad sets: 22%)
+
+   That 70/30 split IS the user's "some of them run smooth".
+
+   WHY DIFFERENT CANVASES = A PUMPING CHARACTER:
+   both board sprite paths (the multi-frame `.sprite-frame` stack and the
+   bounded single-<img> `img.bsprite` src-swapper) render with
+   `object-fit: contain` in a box that is 100% x 100% of `.unit-icon`.
+   `contain` derives its scale from THAT image's own intrinsic size:
+
+       scale = min(boxW / naturalW, boxH / naturalH)
+
+   so a set whose frames were trimmed to their own content bbox gets a
+   different scale on every frame — the figure grows, shrinks and bobs at
+   16fps. Frames that share a canvas get an identical scale and look fine.
+
+   THE FIX — one constant scale per animation, one constant footing:
+   let the frame's element box carry its canvas as a fraction of the reel's
+   reference canvas (Mw = widest frame, Mh = tallest frame), instead of letting
+   each frame fit itself into the whole box:
+
+       element box  = (w/Mw x 100%,  h/Mh x 100%)  of the art window
+       contain scale inside that box
+                    = min(boxW/w, boxH/h)
+                    = min(WINDOW_W/Mw, WINDOW_H/Mh)      — the same for every
+                                                           frame of the reel
+       bottom: 0 + a centred left offset                 — feet never move
+
+   Two things fall out of that identity, and both matter:
+   • the constant holds WHATEVER shape the art window is — the square iso
+     `.unit-icon` and the new card-style window (`src/battle/units.css` makes
+     it `width:auto; margin:6% 8% 0`) are both fine, with no layout read;
+   • min(W/Mw, H/Mh) is the largest scale at which every frame still fits, and
+     it is exactly the scale the reel's BIGGEST pose already rendered at. A
+     fixed sprite is therefore never smaller than it used to be — it stops
+     inflating on its small frames, rather than deflating overall.
+
+   WHY NOT THE OTHER OPTIONS:
+   • object-fit: fill / cover — still intrinsic-derived, and `fill` distorts
+     each frame by a different amount. Worse than the bug.
+   • normalise the art at upload/decode time — that rewrites the user's
+     frames (out of bounds: "do not change the art"), and could not fix the
+     67 sets already published.
+   • pure CSS with no JS — impossible: EVERY CSS image-sizing mode derives its
+     scale from the image's own intrinsic size, so nothing in CSS can know the
+     other frames of the reel exist. `r1_frames.js` supplies exactly two
+     numbers per frame (--sf-w / --sf-h, both pure ratios — no layout reads,
+     no box measuring) and this file does the rest. Without the JS nothing
+     here activates.
+
+   COST: zero per animation frame for the 158 uniform sets (the numbers never
+   change, so nothing is written). No getBoundingClientRect anywhere, no new
+   compositor layers, no change to `will-change` / `contain` / isolation on
+   `.sprite-stack` — the layer-isolation guarantee is untouched.
+   ========================================================================= */
+
+/* Activated only on a stack r1_frames.js has stamped. --sf-w / --sf-h default
+   to 100, which reproduces today's rendering exactly, so a stack that has not
+   been measured (or a page where the JS never ran) is byte-for-byte unchanged.
+
+   !important is REQUIRED here, answering:
+     • index.html ~8155  `.board.iso-mode .unit .unit-icon .sprite-stack > img.sprite-img`
+       { width/height/max-width/max-height/object-fit/object-position: ... !important }
+     • index.html ~13558 `.unit .unit-icon .sprite-frame { width/height: 100% !important }`
+     • the inline `style="width:100%;height:100%;max-width:100%;max-height:100%;
+       object-fit:contain"` the bounded board sprite is built with (index.html ~98143)
+   The iso selector below is deliberately one class heavier than the ~8155 rule;
+   source order alone cannot beat it because that rule is more specific. */
+.board .unit .unit-icon .sprite-stack[data-sf-fit] > img,
+.board.iso-mode .unit .unit-icon .sprite-stack[data-sf-fit] > img.sprite-img,
+.board.iso-mode .unit .unit-icon .sprite-stack[data-sf-fit] > img.sprite-frame {
+  position: absolute !important;
+  top: auto !important;
+  right: auto !important;
+  /* One footing for the whole animation. The frames were trimmed to their
+     content, so a trimmed frame's canvas bottom IS the character's feet —
+     pinning the canvas bottom to the art window's floor keeps them planted. */
+  bottom: 0 !important;
+  /* Centre the box without a transform: `.sprite-frame` already carries
+     `transform: translateZ(0)` for its GPU layer and that must survive. */
+  left: calc((100% - var(--sf-w, 100) * 1%) / 2) !important;
+  width: calc(var(--sf-w, 100) * 1%) !important;
+  height: calc(var(--sf-h, 100) * 1%) !important;
+  /* The 100% caps in the rules above would clamp the box back to the
+     container and re-introduce a per-frame scale. --sf-w / --sf-h are already
+     <= 100 by construction (Mw/Mh are the reel's own maxima), so removing the
+     caps cannot let a frame escape the art window. */
+  max-width: none !important;
+  max-height: none !important;
+  /* LOAD-BEARING, not decoration: the element box above is the frame's canvas
+     measured against the reel's reference canvas, which is deliberately NOT
+     the frame's own aspect ratio. `contain` is what turns that box into the
+     constant scale min(windowW/Mw, windowH/Mh) — and it letterboxes with
+     transparent space rather than distorting. `center bottom` puts that
+     letterbox above the art, never under its feet. */
+  object-fit: contain !important;
+  object-position: center bottom !important;
+}
+
+/* A stack the ticker is cross-fading through keeps its own opacity/visibility
+   contract (`.sprite-frame` / `.is-on`, index.html ~13513). Nothing here
+   changes which frame is visible — only where and how big it lands. */
+
+/* prefers-reduced-motion: nothing in this file animates, and it must not
+   suppress the frame data itself — a sprite standing on one steady frame is
+   still the right picture. Stability is if anything MORE important here, so
+   the rules stay fully active. */

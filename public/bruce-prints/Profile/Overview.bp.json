@@ -1,0 +1,1323 @@
+{
+ "system": "Profile",
+ "label": "Profile, Save & Cloud",
+ "icon": "💾",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "cloudFetchProfile",
+   "name": "cloudFetchProfile",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 52401,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "Profile.walletSeqProfile",
+    "Profile.settings",
+    "Profile.competitive",
+    "Profile.heroes",
+    "Profile.units",
+    "Profile.heroLoadouts"
+   ],
+   "writes": [
+    "Profile.gems",
+    "Profile.sovereigns",
+    "Profile.walletSeqProfile",
+    "Profile.settings",
+    "Profile.records",
+    "Profile.competitive",
+    "Profile.heroes",
+    "Profile.units"
+   ],
+   "calls": 7,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "loadForge",
+   "name": "loadForge",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 77254,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.crashExchange",
+    "Forge.territoryWars",
+    "Profile.competitive",
+    "Profile.deckByHero",
+    "Profile.decks",
+    "Profile.stashTier",
+    "Profile.princePortfolios",
+    "Profile.paidLicences"
+   ],
+   "writes": [
+    "Forge.sprites",
+    "Forge.cardArt",
+    "Forge.catalogMedia",
+    "Forge.locationArt",
+    "Forge.weatherAudio",
+    "Forge.campArt",
+    "Forge.campAudio",
+    "Forge.customCards"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "loadForgeContentFromIdb",
+   "name": "loadForgeContentFromIdb",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 77027,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Forge.fk",
+    "Forge.deletedCardIds",
+    "Forge._uk",
+    "Forge.onboarding",
+    "Forge.campLayout",
+    "Forge.campZones",
+    "Forge.tombstoneArt",
+    "Forge.tombstoneCosmetics"
+   ],
+   "writes": [
+    "Forge.fk",
+    "Forge.deletedCardIds",
+    "Forge._uk",
+    "Forge.campNpcArt",
+    "Forge.campSurvivors",
+    "Forge.onboarding",
+    "Forge.campLayout",
+    "Forge.campZones"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "cloudEnterMatchmaking",
+   "name": "cloudEnterMatchmaking",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 59187,
+   "params": [
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Profile.competitive",
+    "Cloud.client",
+    "Cloud._mmMode",
+    "Cloud._mmMmr",
+    "Cloud._mmFaction",
+    "Cloud._mmHeroId",
+    "Cloud._mmDeck"
+   ],
+   "writes": [
+    "Cloud._mmMode",
+    "Cloud._mmMmr",
+    "Cloud._mmHeroId",
+    "Cloud._mmDeck",
+    "Cloud._mmFaction",
+    "Cloud._mmSeen"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "cloudPublishEverything",
+   "name": "cloudPublishEverything",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 57703,
+   "params": [
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "App._pubLiteDirty"
+   ],
+   "writes": [
+    "App._pubLite",
+    "App._pubLiteDirty"
+   ],
+   "calls": 3,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "_cloudFetchCatalogArtImpl",
+   "name": "_cloudFetchCatalogArtImpl",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 58317,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Forge.catalogMedia",
+    "Forge.forgeKey",
+    "Forge.idxKey"
+   ],
+   "writes": [
+    "Forge.catalogMedia",
+    "Forge.forgeKey"
+   ],
+   "calls": 2,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "saveForge",
+   "name": "saveForge",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 78022,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App._pubLite",
+    "Profile.cloud",
+    "App._forgeIdbLoaded",
+    "Forge.sprites",
+    "Forge.cardArt",
+    "Forge._sprIds",
+    "Forge._carIds",
+    "Forge.locationArt"
+   ],
+   "writes": [
+    "App._pubLiteDirty",
+    "Forge.foundry"
+   ],
+   "calls": 2,
+   "x": 1100,
+   "y": 80
+  },
+  {
+   "id": "_cloudifyAllAssets",
+   "name": "_cloudifyAllAssets",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54729,
+   "params": [
+    "onProgress"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Forge.campArt",
+    "Forge.reArt",
+    "Forge.opArt",
+    "Forge.chestArt",
+    "Forge.packArt",
+    "Forge.itemArt",
+    "Forge.frameArt"
+   ],
+   "writes": [],
+   "calls": 3,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "cloudPublishCatalog",
+   "name": "cloudPublishCatalog",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 56525,
+   "params": [
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Forge.customCards",
+    "Forge.campaigns",
+    "Forge.pageGuides",
+    "Forge.starterDecks",
+    "Forge.tombstoneArt",
+    "Forge.weatherAudio",
+    "Forge.customSfx"
+   ],
+   "writes": [
+    "Forge.catalogMedia"
+   ],
+   "calls": 2,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "_cloudPublishEverythingInner",
+   "name": "_cloudPublishEverythingInner",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 57730,
+   "params": [
+    "opts",
+    "out"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 3,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "saveProfile",
+   "name": "saveProfile",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 80402,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Profile.replays",
+    "Profile.frTaxLedger"
+   ],
+   "writes": [
+    "Profile.replays"
+   ],
+   "calls": 2,
+   "x": 760,
+   "y": 212
+  },
+  {
+   "id": "_cloudifyWalk",
+   "name": "_cloudifyWalk",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54710,
+   "params": [
+    "node",
+    "path",
+    "stat",
+    "depth"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "cloudFetchSprites",
+   "name": "cloudFetchSprites",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 55325,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [
+    "Forge.forgeKey"
+   ],
+   "calls": 1,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "_persistResourcesSoon",
+   "name": "_persistResourcesSoon",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 42973,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "cloudSignOut",
+   "name": "cloudSignOut",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 50849,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "cloudSetNewPassword",
+   "name": "cloudSetNewPassword",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 50958,
+   "params": [
+    "password"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [
+    "Cloud._recoveryPending"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "cloudSyncProfile",
+   "name": "cloudSyncProfile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 51407,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Forge.customCards",
+    "Forge.deletedCardIds",
+    "Forge.customMoves",
+    "Forge.campLayout",
+    "Forge.campZones",
+    "Forge.campNpcArt",
+    "Forge.campSurvivors"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "cloudMarkDirty",
+   "name": "cloudMarkDirty",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54101,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "_cloudifyField",
+   "name": "_cloudifyField",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54691,
+   "params": [
+    "container",
+    "key",
+    "path",
+    "stat"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 344
+  },
+  {
+   "id": "_persistCatalog",
+   "name": "_persistCatalog",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 55678,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App._pubLite"
+   ],
+   "writes": [
+    "App._pubLiteDirty"
+   ],
+   "calls": 0,
+   "x": 760,
+   "y": 476
+  },
+  {
+   "id": "cloudFetchCatalog",
+   "name": "cloudFetchCatalog",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 56455,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 1100,
+   "y": 212
+  },
+  {
+   "id": "cloudFetchCatalogArt",
+   "name": "cloudFetchCatalogArt",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58296,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "_persistProgressNow",
+   "name": "_persistProgressNow",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 78990,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "_persistForgeNow",
+   "name": "_persistForgeNow",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 79098,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "_loadCxHoldings",
+   "name": "_loadCxHoldings",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 221747,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cxHoldings"
+   ],
+   "writes": [
+    "Profile.cxHoldings"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 740
+  },
+  {
+   "id": "cloudLive",
+   "name": "cloudLive",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 132,
+   "params": [
+    "game"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "cloudSignUp",
+   "name": "cloudSignUp",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 50702,
+   "params": [
+    "email",
+    "password",
+    "displayName"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "cloudChangePassword",
+   "name": "cloudChangePassword",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 50808,
+   "params": [
+    "currentPassword",
+    "newPassword"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "cloudSignIn",
+   "name": "cloudSignIn",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 50838,
+   "params": [
+    "email",
+    "password"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "cloudResetPassword",
+   "name": "cloudResetPassword",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 50979,
+   "params": [
+    "email"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "cloudResendConfirmation",
+   "name": "cloudResendConfirmation",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 51008,
+   "params": [
+    "email"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "cloudVerifyEmailCode",
+   "name": "cloudVerifyEmailCode",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 51036,
+   "params": [
+    "email",
+    "code"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud._initError",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2588
+  },
+  {
+   "id": "_profileLooksEmpty",
+   "name": "_profileLooksEmpty",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 52291,
+   "params": [
+    "p"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 872
+  },
+  {
+   "id": "_cloudRowHasProgress",
+   "name": "_cloudRowHasProgress",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 52377,
+   "params": [
+    "d"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1004
+  },
+  {
+   "id": "cloudSyncSprites",
+   "name": "cloudSyncSprites",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54191,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Forge.forgeKey"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2720
+  },
+  {
+   "id": "cloudUploadCardArtFile",
+   "name": "cloudUploadCardArtFile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54311,
+   "params": [
+    "cardId",
+    "dataUrl"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2852
+  },
+  {
+   "id": "cloudUploadAssetFile",
+   "name": "cloudUploadAssetFile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 54494,
+   "params": [
+    "baseName",
+    "dataUrl"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 344
+  },
+  {
+   "id": "_persistSpriteRecord",
+   "name": "_persistSpriteRecord",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 55183,
+   "params": [
+    "id",
+    "opts"
+   ],
+   "async": true,
+   "reads": [
+    "Forge.sprites",
+    "Profile.cloud",
+    "Forge._sprIds"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2984
+  },
+  {
+   "id": "_cloudFetchCatalogFromStorage",
+   "name": "_cloudFetchCatalogFromStorage",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 56411,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1440,
+   "y": 80
+  },
+  {
+   "id": "cloudVerifyPublish",
+   "name": "cloudVerifyPublish",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 57475,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Forge.customCards",
+    "Forge.mainMenuHeroes",
+    "Forge.sprites"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 608
+  },
+  {
+   "id": "cloudGood",
+   "name": "cloudGood",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 57561,
+   "params": [
+    "rec"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3116
+  },
+  {
+   "id": "cloudPublishCatalogArt",
+   "name": "cloudPublishCatalogArt",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58201,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Forge.forgeKey"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 740
+  },
+  {
+   "id": "cloudFetchLeaderboard",
+   "name": "cloudFetchLeaderboard",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58963,
+   "params": [
+    "force"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "App.screen"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3248
+  },
+  {
+   "id": "cloudFetchPlayerProfile",
+   "name": "cloudFetchPlayerProfile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 59023,
+   "params": [
+    "userId",
+    "force"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client",
+    "App.screen"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3380
+  },
+  {
+   "id": "cloudLeaveMatchmaking",
+   "name": "cloudLeaveMatchmaking",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 59561,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3512
+  },
+  {
+   "id": "_persistItemInventoryNow",
+   "name": "_persistItemInventoryNow",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 63556,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.itemInventory"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 476
+  },
+  {
+   "id": "_persistable",
+   "name": "_persistable",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 78094,
+   "params": [
+    "v"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 1440,
+   "y": 212
+  },
+  {
+   "id": "_persistMatchesTarget",
+   "name": "_persistMatchesTarget",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 101734,
+   "params": [
+    "u",
+    "owner",
+    "target"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3644
+  },
+  {
+   "id": "_cloudStatusPipUpdate",
+   "name": "_cloudStatusPipUpdate",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 206783,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3776
+  },
+  {
+   "id": "_persistMatchSession",
+   "name": "_persistMatchSession",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 207309,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3908
+  },
+  {
+   "id": "_saveCxHoldings",
+   "name": "_saveCxHoldings",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 221741,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cxHoldings"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1136
+  },
+  {
+   "id": "_profile",
+   "name": "_profile",
+   "kind": "function",
+   "file": "public/src/streets/index.js",
+   "line": 483,
+   "params": [
+    "tiles",
+    "profile",
+    "secs"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4040
+  },
+  {
+   "id": "cloudReady",
+   "name": "cloudReady",
+   "kind": "pure",
+   "file": "public/src/fieldshop/index.js",
+   "line": 155,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4172
+  },
+  {
+   "id": "cloudList",
+   "name": "cloudList",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 73,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4304
+  },
+  {
+   "id": "cloudLoad",
+   "name": "cloudLoad",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 84,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1268
+  },
+  {
+   "id": "cloudSave",
+   "name": "cloudSave",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 94,
+   "params": [
+    "map",
+    "isPublic"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4436
+  },
+  {
+   "id": "cloudDelete",
+   "name": "cloudDelete",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 107,
+   "params": [
+    "id"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4568
+  },
+  {
+   "id": "cloudSetLive",
+   "name": "cloudSetLive",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 114,
+   "params": [
+    "id",
+    "on"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4700
+  },
+  {
+   "id": "cloudSetPublic",
+   "name": "cloudSetPublic",
+   "kind": "function",
+   "file": "public/src/mapforge/mapforge.api.js",
+   "line": 154,
+   "params": [
+    "id",
+    "on"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4832
+  },
+  {
+   "id": "cloudCanWrite",
+   "name": "cloudCanWrite",
+   "kind": "pure",
+   "file": "public/src/mapforge/mapforge.editor.js",
+   "line": 903,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4964
+  },
+  {
+   "id": "cloudOf",
+   "name": "cloudOf",
+   "kind": "pure",
+   "file": "public/src/farm/index.js",
+   "line": 3470,
+   "params": [
+    "host"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5096
+  },
+  {
+   "id": "cloudLiveAll",
+   "name": "cloudLiveAll",
+   "kind": "function",
+   "file": "public/src/widgets/widgets.api.js",
+   "line": 70,
+   "params": [],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5228
+  }
+ ],
+ "edges": [
+  {
+   "from": "cloudFetchProfile",
+   "to": "cloudSyncProfile"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "saveProfile"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "_profileLooksEmpty"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "_cloudRowHasProgress"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "cloudFetchSprites"
+  },
+  {
+   "from": "cloudFetchProfile",
+   "to": "_saveCxHoldings"
+  },
+  {
+   "from": "loadForge",
+   "to": "_loadCxHoldings"
+  },
+  {
+   "from": "loadForgeContentFromIdb",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudPublishEverything",
+   "to": "_cloudPublishEverythingInner"
+  },
+  {
+   "from": "cloudPublishEverything",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudPublishEverything",
+   "to": "_persistCatalog"
+  },
+  {
+   "from": "_cloudFetchCatalogArtImpl",
+   "to": "saveForge"
+  },
+  {
+   "from": "_cloudFetchCatalogArtImpl",
+   "to": "_persistCatalog"
+  },
+  {
+   "from": "saveForge",
+   "to": "_persistable"
+  },
+  {
+   "from": "_cloudifyAllAssets",
+   "to": "_cloudifyWalk"
+  },
+  {
+   "from": "_cloudifyAllAssets",
+   "to": "_cloudifyField"
+  },
+  {
+   "from": "_cloudifyAllAssets",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudPublishCatalog",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudPublishCatalog",
+   "to": "cloudFetchCatalog"
+  },
+  {
+   "from": "_cloudPublishEverythingInner",
+   "to": "cloudPublishCatalog"
+  },
+  {
+   "from": "_cloudPublishEverythingInner",
+   "to": "cloudPublishCatalogArt"
+  },
+  {
+   "from": "_cloudPublishEverythingInner",
+   "to": "cloudVerifyPublish"
+  },
+  {
+   "from": "saveProfile",
+   "to": "_persistItemInventoryNow"
+  },
+  {
+   "from": "_cloudifyWalk",
+   "to": "_cloudifyField"
+  },
+  {
+   "from": "cloudFetchSprites",
+   "to": "saveForge"
+  },
+  {
+   "from": "_persistResourcesSoon",
+   "to": "saveProfile"
+  },
+  {
+   "from": "cloudSignOut",
+   "to": "cloudSyncProfile"
+  },
+  {
+   "from": "cloudSyncProfile",
+   "to": "saveProfile"
+  },
+  {
+   "from": "cloudMarkDirty",
+   "to": "saveProfile"
+  },
+  {
+   "from": "_cloudifyField",
+   "to": "cloudUploadAssetFile"
+  },
+  {
+   "from": "cloudFetchCatalog",
+   "to": "_cloudFetchCatalogFromStorage"
+  },
+  {
+   "from": "cloudFetchCatalogArt",
+   "to": "_cloudFetchCatalogArtImpl"
+  },
+  {
+   "from": "_persistProgressNow",
+   "to": "saveProfile"
+  },
+  {
+   "from": "_persistForgeNow",
+   "to": "saveForge"
+  },
+  {
+   "from": "cloudLive",
+   "to": "cloudLoad"
+  }
+ ]
+}

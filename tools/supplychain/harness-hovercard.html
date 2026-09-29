@@ -1,0 +1,122 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>supplychain · hover card harness</title>
+<!-- The same fonts index.html loads, so the harness photographs the card in
+     Cinzel / Crimson Text. Headless Chromium may be offline; the CSS falls back
+     to Georgia and the DESIGN-BAR heading test still sees a serif. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #0c0b0a; color: #e8e0d0; font: 14px Georgia, serif; }
+  /* the feature's root, exactly as the shell will make it: body-level, fixed, full-screen */
+  #sc-overlay { position: fixed; inset: 0; z-index: 2147483400; color-scheme: dark; background: #0c0b0a; overflow: hidden; }
+  #sc-overlay .fake-node {
+    position: absolute; width: 96px; height: 40px; margin: 0; padding: 0 4px;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    font: 10px/1.1 Georgia, serif; letter-spacing: .04em; color: #d9cbaa;
+    background: #1c1813; border: 1px solid rgba(212,175,55,.34); border-radius: 3px; cursor: pointer;
+    overflow: hidden;
+  }
+  #sc-overlay .fake-node[data-status="planned"] { border-style: dashed; opacity: .7; }
+  #sc-overlay .fake-node:hover, #sc-overlay .fake-node[data-hot="1"] { border-color: #f5d76e; color: #f5d76e; }
+  #sc-overlay .note { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); font: italic 12px Georgia, serif; color: #a89888; white-space: nowrap; }
+</style>
+</head><body>
+<script src="/__sc/fake-bridge.js"></script>
+<div id="sc-overlay"></div>
+<script type="module">
+  import { getData } from '/src/supplychain/data.js';
+  import { hoverVM, mountHover } from '/src/supplychain/hover.js';
+  import * as B from '/src/supplychain/sc.bridge.js';
+  import { SC } from '/src/supplychain/tuning.js';
+
+  const q = new URLSearchParams(location.search);
+  const root = document.getElementById('sc-overlay');
+  const data = Object.assign({}, getData(), { opLabel: (id) => B.opLabel(id) });
+  const ids = data.graph.nodes.map((n) => n.id);
+  const vms = {}; for (const id of ids) vms[id] = hoverVM(id, data);
+  const hover = mountHover(root);
+
+  /* 33 fake hover sources. The first four sit IN the corners so a screenshot
+     shows the flip; the rest fill a grid, so every node has a place to hover.
+     Positions are derived from the viewport at load so 390x844 works too. */
+  const nodes = {};
+  function layout() {
+    const W = innerWidth, H = innerHeight, nw = 96, nh = 40, pad = 4;
+    const corners = [[pad, pad], [W - nw - pad, pad], [pad, H - nh - pad], [W - nw - pad, H - nh - pad]];
+    const cols = Math.max(2, Math.floor((W - 24) / (nw + 12)));
+    const inner = ids.length - 4;
+    const rows = Math.ceil(inner / cols);
+    const gx = (W - cols * nw) / (cols + 1), gy = Math.max(nh + 8, (H - 2 * (nh + 24) - rows * nh) / (rows + 1));
+    ids.forEach((id, i) => {
+      const b = nodes[id];
+      let x, y;
+      if (i < 4) [x, y] = corners[i];
+      else { const k = i - 4; const c = k % cols, r = Math.floor(k / cols); x = gx + c * (nw + gx); y = nh + 24 + gy + r * (nh + gy); }
+      b.style.left = Math.round(x) + 'px'; b.style.top = Math.round(Math.min(y, H - nh - 8)) + 'px';
+    });
+  }
+  for (const id of ids) {
+    const n = data.graph.nodes.find((x) => x.id === id);
+    const b = document.createElement('button');
+    b.className = 'fake-node'; b.type = 'button'; b.dataset.id = id; b.dataset.status = n.status;
+    b.textContent = n.label;
+    root.appendChild(b); nodes[id] = b;
+  }
+  layout();
+  addEventListener('resize', layout);
+  const note = document.createElement('div'); note.className = 'note';
+  note.textContent = 'hover a tile · fake bridge: ' + ((window.__scFake && window.__scFake.mode) || 'n/a');
+  root.appendChild(note);
+
+  /* real pointer hover, the way the shell will drive it: pointer + node rect */
+  let hot = null;
+  const showFor = (id, x, y) => {
+    const b = nodes[id]; if (!b) return;
+    const r = b.getBoundingClientRect();
+    hover.show(vms[id], { x, y, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } });
+    if (hot && hot !== b) hot.dataset.hot = '0';
+    hot = b; b.dataset.hot = '1';
+  };
+  root.addEventListener('pointermove', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('.fake-node') : null;
+    if (b) showFor(b.dataset.id, e.clientX, e.clientY);
+    else { hover.hide(); if (hot) { hot.dataset.hot = '0'; hot = null; } }
+  });
+  root.addEventListener('pointerleave', () => { hover.hide(); if (hot) { hot.dataset.hot = '0'; hot = null; } });
+
+  /* the test surface: drive show/hide/dispose without a pointer */
+  window.__scHover = {
+    ids, vms, hover, data, SC,
+    show: (id, x, y, useRect = true) => {
+      const b = nodes[id]; const r = b ? b.getBoundingClientRect() : null;
+      const px = Number.isFinite(x) ? x : (r ? r.left + r.width / 2 : 0), py = Number.isFinite(y) ? y : (r ? r.top + r.height / 2 : 0);
+      hover.show(vms[id], useRect && r ? { x: px, y: py, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } } : { x: px, y: py });
+      return hover.placement();
+    },
+    hide: () => hover.hide(),
+    dispose: () => hover.dispose(),
+    moveNode: (id, x, y) => { const b = nodes[id]; if (b) { b.style.left = x + 'px'; b.style.top = y + 'px'; } },
+    /* The 3D scene does not draw every tile at 96x40: a system landmark zoomed
+       in on a phone fills most of the screen, and THAT is the rect that forces
+       the card's compact / MINI fallbacks. The round-2 critic could only reach
+       those levels with synthetic rects, so the harness can now make a real
+       oversized hover source and photograph the result. */
+    sizeNode: (id, w, h) => { const b = nodes[id]; if (b) { b.style.width = w + 'px'; b.style.height = h + 'px'; } },
+    nodeRect: (id) => { const b = nodes[id]; if (!b) return null; const r = b.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height }; },
+    cardRect: () => { const c = document.getElementById('sc-hover'); if (!c) return null; const r = c.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, w: r.width, h: r.height, on: c.dataset.on, vis: getComputedStyle(c).visibility }; },
+  };
+
+  /* ?node=medical[&x=..&y=..][&w=..&h=..] shows one card at load so a single-shot CLI run photographs it */
+  const pick = q.get('node');
+  if (pick && nodes[pick]) {
+    const cx = q.get('x'), cy = q.get('y'), cw = q.get('w'), ch = q.get('h');
+    if (cw != null || ch != null) window.__scHover.sizeNode(pick, +(cw || 96), +(ch || 40));
+    if (cx != null) window.__scHover.moveNode(pick, +cx, +cy);
+    const r = nodes[pick].getBoundingClientRect();
+    showFor(pick, r.left + r.width / 2, r.top + r.height / 2);
+  }
+  document.body.dataset.ready = '1';
+</script>
+</body></html>

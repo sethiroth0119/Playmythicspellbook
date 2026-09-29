@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Gauntlet Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#070605; --ink-2:#0c0908; --panel:#110d08; --panel-2:#161009;
+  --gold:#d8b45f; --gold-hi:#f2dda2; --gold-dim:#8a7038; --gold-deep:#5c4a22;
+  --rule:rgba(216,180,95,.20); --rule-hi:rgba(216,180,95,.42);
+  --text:#cabfa9; --muted:#8b8071; --faint:#6b6255;
+  --loss:#b4553f; --loss-dim:#6d3527; --win:#d8b45f;
+  --oct:polygon(10px 0,calc(100% - 10px) 0,100% 10px,100% calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,0 calc(100% - 10px),0 10px);
+  --oct-9:polygon(9px 0,calc(100% - 9px) 0,100% 9px,100% calc(100% - 9px),calc(100% - 9px) 100%,9px 100%,0 calc(100% - 9px),0 9px);
+  --oct-s:polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px);
+  --disp:"Cinzel",Georgia,"Times New Roman",serif;
+  --body:"EB Garamond",Georgia,"Times New Roman",serif;
+}
+html{background:var(--ink)}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ink); color:var(--text);
+  font-family:var(--body); font-size:17px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(120% 70% at 50% -10%, rgba(120,88,34,.16), transparent 62%),
+    radial-gradient(90% 55% at 50% 108%, rgba(84,60,24,.10), transparent 60%);
+  background-attachment:fixed;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+
+/* ── masthead ─────────────────────────────────────────────── */
+.mast{padding:64px 0 30px;text-align:center;position:relative}
+.kicker{font-family:var(--disp);font-size:11px;letter-spacing:.44em;
+  color:var(--gold-dim);text-transform:uppercase;margin:0 0 20px}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(38px,7vw,68px);
+  letter-spacing:.10em;margin:0;line-height:1.04;
+  background:linear-gradient(178deg,#fbeec4 8%,var(--gold) 46%,#9b7c33 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 2px 0 rgba(0,0,0,.65))}
+.dek{font-family:var(--disp);font-size:12px;letter-spacing:.30em;
+  text-transform:uppercase;color:var(--muted);margin:18px 0 0}
+.diamond{display:flex;align-items:center;gap:14px;justify-content:center;margin:26px auto 0;max-width:440px}
+.diamond::before,.diamond::after{content:"";height:1px;flex:1;
+  background:linear-gradient(90deg,transparent,var(--rule-hi),transparent)}
+.diamond i{width:7px;height:7px;background:var(--gold);rotate:45deg;flex:none;
+  box-shadow:0 0 10px rgba(216,180,95,.55)}
+
+/* ── tally ────────────────────────────────────────────────── */
+.tally{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:14px;margin:38px 0 6px}
+.stat{background:linear-gradient(180deg,var(--gold-dim),#2c2211);
+  clip-path:var(--oct);padding:20px 18px;text-align:center;position:relative;isolation:isolate}
+.stat::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#1b1409,var(--panel))}
+.stat b{display:block;font-family:var(--disp);font-size:40px;font-weight:700;
+  color:var(--gold-hi);line-height:1;text-shadow:0 2px 6px rgba(0,0,0,.7)}
+.stat span{display:block;font-family:var(--disp);font-size:10px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--muted);margin-top:10px}
+
+/* ── section headings ─────────────────────────────────────── */
+h2{font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:.34em;
+  text-transform:uppercase;color:var(--gold);margin:64px 0 6px;
+  display:flex;align-items:center;gap:16px}
+h2::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,var(--rule-hi),transparent)}
+.hint{color:var(--faint);font-size:14px;font-style:italic;margin:0 0 22px}
+
+/* ── timeline matrix ──────────────────────────────────────── */
+.tl{width:100%;border-collapse:collapse;font-size:14px}
+.tl th{font-family:var(--disp);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--muted);font-weight:400;text-align:left;padding:0 12px 12px;
+  border-bottom:1px solid var(--rule)}
+.tl th.rd{text-align:center;width:172px;color:var(--gold-dim)}
+.tl td{padding:13px 12px;border-bottom:1px solid rgba(216,180,95,.09);vertical-align:middle}
+.tl td.u{font-family:var(--disp);font-size:13px;letter-spacing:.06em;color:var(--text)}
+.tl td.u em{display:block;font-family:var(--body);font-style:normal;font-size:12px;
+  color:var(--faint);letter-spacing:0;margin-top:2px}
+.cell{text-align:center}
+.meter{display:block;height:5px;background:rgba(255,255,255,.06);position:relative;margin:8px auto 0;width:132px}
+.meter i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--loss-dim),var(--loss))}
+.meter.near i{background:linear-gradient(90deg,#6d5a24,var(--gold))}
+.meter b{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;
+  background:var(--gold-hi);opacity:.9;box-shadow:0 0 5px rgba(242,221,162,.5)}
+.sc{font-family:var(--disp);font-size:15px;color:var(--text)}
+.sc.bad{color:var(--loss)}
+.sc small{color:var(--faint);font-size:11px;letter-spacing:.06em}
+.seal{display:inline-block;font-family:var(--disp);font-size:10px;letter-spacing:.20em;
+  color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));
+  padding:5px 12px;clip-path:var(--oct-s);font-weight:700}
+.na{color:#3d382f}
+
+/* ── unit panels ──────────────────────────────────────────── */
+.unit{background:linear-gradient(180deg,rgba(138,112,56,.75),rgba(46,36,18,.75));
+  clip-path:var(--oct);margin:16px 0;position:relative;isolation:isolate}
+.unit::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#171009,var(--ink-2))}
+.uhead{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  padding:22px 26px;border-bottom:1px solid var(--rule);
+  background:linear-gradient(180deg,rgba(216,180,95,.055),transparent)}
+.uhead h3{font-family:var(--disp);font-size:19px;font-weight:600;letter-spacing:.10em;
+  color:var(--gold-hi);margin:0}
+.uid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  color:var(--faint);letter-spacing:.02em}
+.ublurb{flex:1 1 100%;font-size:14px;color:var(--muted);font-style:italic;margin:2px 0 0}
+.pill{margin-left:auto;font-family:var(--disp);font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;padding:6px 13px;clip-path:var(--oct-s);white-space:nowrap}
+.pill.open{color:var(--loss);background:rgba(180,85,63,.13);
+  box-shadow:inset 0 0 0 1px rgba(180,85,63,.34)}
+.pill.won{color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));font-weight:700}
+
+.rnd{padding:8px 26px 24px}
+.rlabel{font-family:var(--disp);font-size:10px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--gold-dim);margin:20px 0 0;display:flex;align-items:center;gap:12px}
+.rlabel::after{content:"";height:1px;flex:1;background:var(--rule)}
+.crit{margin:16px 0 0;padding:0 0 0 20px;border-left:2px solid var(--loss-dim)}
+.crit.w{border-left-color:var(--gold-deep)}
+.cmeta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:9px}
+.vd{font-family:var(--disp);font-size:10px;letter-spacing:.18em;padding:4px 10px;clip-path:var(--oct-s)}
+.vd.l{color:#f0c3b5;background:rgba(180,85,63,.2);box-shadow:inset 0 0 0 1px rgba(180,85,63,.4)}
+.vd.w{color:var(--gold-hi);background:rgba(216,180,95,.14);box-shadow:inset 0 0 0 1px rgba(216,180,95,.36)}
+.who{font-family:var(--disp);font-size:10px;letter-spacing:.20em;text-transform:uppercase;color:var(--faint)}
+.sv{font-family:var(--disp);font-size:13px;color:var(--muted)}
+.sv b{color:var(--text)}
+.gap{margin:0;color:var(--text);font-size:16px;line-height:1.68;
+  hyphens:auto;overflow-wrap:break-word}
+.gap code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.83em;
+  color:var(--gold);background:rgba(216,180,95,.075);padding:1px 5px;
+  border-radius:2px;overflow-wrap:break-word}
+.verb{font-family:var(--disp);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:#61594a;margin:0 0 7px}
+
+/* ── integration ──────────────────────────────────────────── */
+.ipass{background:linear-gradient(180deg,rgba(138,112,56,.55),rgba(46,36,18,.55));
+  clip-path:var(--oct);padding:8px 26px 26px;margin:16px 0;position:relative;isolation:isolate}
+.ipass::before{content:"";position:absolute;inset:1px;z-index:-1;clip-path:var(--oct-9);
+  background:linear-gradient(180deg,#150f08,var(--ink-2))}
+.ientry{display:grid;grid-template-columns:104px 1fr;gap:18px;padding:18px 0;
+  border-bottom:1px solid rgba(216,180,95,.09)}
+.ientry:last-child{border-bottom:0}
+.itag{font-family:var(--disp);font-size:9px;letter-spacing:.18em;text-align:center;
+  padding:5px 6px;clip-path:var(--oct-s);height:fit-content;margin-top:3px}
+.itag.FIXED{color:#0a0806;background:linear-gradient(180deg,var(--gold-hi),var(--gold-dim));font-weight:700}
+.itag.CHECKED{color:var(--gold);background:rgba(216,180,95,.1);box-shadow:inset 0 0 0 1px rgba(216,180,95,.3)}
+.itag.CLEAN{color:var(--muted);background:rgba(255,255,255,.04);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+.ientry h4{font-family:var(--disp);font-size:14px;font-weight:600;letter-spacing:.05em;
+  color:var(--gold-hi);margin:0 0 6px}
+.ientry p{margin:0;font-size:15px;color:var(--muted);line-height:1.6}
+.ientry code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82em;
+  color:var(--gold);background:rgba(216,180,95,.075);padding:1px 5px;border-radius:2px}
+
+footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--rule);
+  text-align:center;font-family:var(--disp);font-size:10px;letter-spacing:.22em;
+  text-transform:uppercase;color:#4b443a}
+
+@media (max-width:720px){
+  .wrap{padding:0 16px 64px}
+  .uhead,.rnd,.ipass{padding-left:18px;padding-right:18px}
+  .pill{margin-left:0}
+  .ientry{grid-template-columns:1fr;gap:8px}
+  .itag{justify-self:start;padding-left:12px;padding-right:12px}
+  .tlwrap{overflow-x:auto}
+}
+</style>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     THE GAUNTLET LEDGER — docs/gauntlet-progress.html
+
+     ⚠ APPEND ONLY. Each round the integrator adds ONE object to the "rounds"
+     array in the JSON block below. Never edit and never delete an earlier
+     round: the whole point of this page is that the improvement between
+     rounds stays legible, and a rewritten history shows none.
+
+     Every "gap" string is a critic's own words, copied VERBATIM. Do not
+     summarise, tidy or shorten them — a paraphrased critique is a critique
+     you can no longer check the next round's work against. Backtick spans in
+     that text are rendered as <code> at paint time; the text itself is
+     untouched.
+
+     Self-contained by design: no images, no scripts, no data beyond this
+     file. It must open correctly straight off disk.
+     ═══════════════════════════════════════════════════════════════════════ -->
+</head>
+<body>
+
+<script type="application/json" id="ledger">
+{
+ "units": [
+  {
+   "id": "u1-keep-foundation",
+   "name": "Keep Foundation",
+   "blurb": "The shared hub shell — top bar, plaques, background grade."
+  },
+  {
+   "id": "u2-hub-tiles",
+   "name": "Hub Tiles",
+   "blurb": "The portal tile: art panel, title type, size steps."
+  },
+  {
+   "id": "u3-main-menu-comp-a",
+   "name": "Main Menu (Comp A)",
+   "blurb": "The standalone painted main menu and its furniture."
+  },
+  {
+   "id": "u4-dispatch-and-warpath",
+   "name": "Dispatch & Warpath",
+   "blurb": "Herald's Dispatch feed, its footer and pager."
+  },
+  {
+   "id": "u5-motion",
+   "name": "Motion",
+   "blurb": "Page-to-page transitions and the sub-hub entrance."
+  },
+  {
+   "id": "u6-one-back-button",
+   "name": "One Back Button",
+   "blurb": "A single back control across every screen."
+  }
+ ],
+ "rounds": [
+  {
+   "n": 1,
+   "won": [],
+   "open": [
+    "u1-keep-foundation",
+    "u2-hub-tiles",
+    "u3-main-menu-comp-a",
+    "u4-dispatch-and-warpath",
+    "u5-motion",
+    "u6-one-back-button"
+   ],
+   "integration": [
+    {
+     "tag": "FIXED",
+     "head": "Blank sub-hubs (u5).",
+     "body": "Every entrance rule in hub-transitions.css was one animation, <code>from{opacity:0; translate:…}</code> under <code>animation-fill-mode: backwards</code>. <code>backwards</code> also holds the from-state while an animation is merely <em>pending</em>, and in the mandated verification environment the animations are created but never tick — playState <code>running</code>, currentTime <code>0</code>, forever. So <code>opacity:0</code> was held forever and four hubs rendered as background art plus a breadcrumb. Split into two components per element: movement keeps <code>backwards</code>, the opacity ramp runs with no fill-mode and a non-zero delay so a frozen clock lands in the <em>before</em> phase. Recorded as R1b in the file's rules header."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All four hubui sheets are linked.",
+     "body": "<code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code>, <code>hub-transitions.css</code> — all present at index.html:223407-223410 with the <code>?v=120w7</code> buster. No dead sheets this round."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting.",
+     "body": "Ten selectors are declared in more than one sheet, all of them <code>hub-keep</code> × <code>hub-transitions</code> on the same elements — and not one shares a property. hub-keep owns the rest look, hub-transitions owns <code>animation</code>. The separation holds."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "Eight pages render, plus reduced motion.",
+     "body": "main, battle, forge, exchange, codex, field, arcanum, cardshop — and battle again under forced <code>prefers-reduced-motion</code>, which had failed identically. Battle Hall went 11.4 / 195 colours → 15.1 / 623, matching a run with the sheet removed. Locked tiles kept their dimmed rest state, so the opacity split did not step on R3."
+    },
+    {
+     "tag": "CLEAN",
+     "head": "<code>node _synckcheck.mjs</code>",
+     "body": "All scripts clean."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "LOSES",
+      "score": 8.2,
+      "bar": 9,
+      "gap": "The top bar's three plaque types do not share a height, so the bar has no baseline rhythm. Measured at 1920x993: `.keep-tab` = 41px tall, `.keep-glyph-btn` (music) = 41x41, but `.hub-currency-rail` = 374x37. In comp-hub.html all three are one band — `.tab{height:44px}` with a 42px `.tab-in`, `.plaque` 620x44 with a 42px `.plaque-in`, `.glyph-btn` 44x44 — cut from one piece of metal, which is exactly what hub-keep.css's own §C4 comment claims to do. In our render the speaker octagon is visibly taller than the player strip it sits beside, and the player strip is shorter than the two tabs opposite it, so the group reads as a lightweight status line floating between plaques instead of the third plaque in a row. The whole bar is also ~7% under the comp (41 vs 44), which is why the comp's chrome feels more substantial at a glance. Fix: `html body .keep-hud .hub-currency-rail:not(#keep-none)` currently sets only `padding:1px 3px` and takes its height from pill content — give it an explicit `height:44px` with the `::before` inner face at `inset:1px` (42px), and lift `.keep-tab` / `.keep-glyph-btn` from 41 to the comp's 44/42. Three plaques, one height, one band."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "§3 Background. The shell applies a per-hub `--keep-bg-filter` and claims in its own comment that \"the RESULT is uniform: every plate ends up on the same warm near-black.\" Measured, it is not — and it is not warm. Sampling the left gutter (x20-300, y300-900) of each rendered hub against the comp: comp = mean 9.6, rgb [11,9,7] (R−B = 4 at low luminance, i.e. distinctly warm). Live: Forge = mean 20.9, rgb [21,20,19] — more than double the comp's ground and effectively NEUTRAL GREY (R−B = 1), which is the one thing §1 forbids by name; Exchange = mean 0.8, rgb [0,0,0] — the painted plate is crushed out of existence, which fights the hard requirement to keep every background image; Arcanum = mean 14.1, rgb [21,12,6]. In the title band (y80-230) the same spread runs 3.9 (Codex) → 12.0 (Battle) → 23.4 (Arcanum) against the comp's 12.7, with peak highlights of 229 on Exchange vs the comp's 60. The visible consequence: on Arcanum the subtitle and the diamond rule sit on a lit carved arch and nearly disappear; on Forge the largest area of the screen is flat cold grey with the plate's burnt-in English signage (\"FREEDOM GUNS AMMO\", \"THANK YOU FOR YOUR BUS…\") legible at UI size, competing with the Cinzel type — the comp's plate carries no text at all. The fix is not more per-hub `brightness()` guessing. The `::before` top scrim fades to zero alpha by 30% of viewport height, which on a 993px viewport is ABOVE the title block, so the title band is at the mercy of the plate. Extend the top scrim through the title block and give it a floor — e.g. `rgba(9,7,5,.72) 0%, rgba(9,7,5,.62) 22%, rgba(9,7,5,.45) 34%, rgba(9,7,5,0) 46%` — add a warm multiply layer (`rgba(26,18,9,.30)` or `sepia()` applied to the wash rather than the plate) so the ground is warm regardless of plate temperature, and then walk the per-hub `brightness()` values back toward the comp's `.80` so Exchange and Codex stop being crushed to dead black. One recipe, uniform text contrast, art still visible on all six."
+     }
+    ],
+    "u2-hub-tiles": [
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 9,
+      "gap": "The art panel — the one thing §3 exists for — is empty for the first seconds of every visit and often never fills. HUB_TILE_ART (public/index.html:115027-115075) points every tile at full-resolution background plates (Combatbackground.png 1.8 MB, warmap.png 2.2 MB, vs-screen-bg.png 2.2 MB …) rendered into a 289x178 panel, with loading=\"lazy\". That is ~10 MB of PNG per sub-hub and ~40 MB across the six. On a cold cache the comp-parity render only arrives at a 40 s virtual-time budget, and even then 2 of 7 Battle Hall panels were still blank; at the mandated budget the panels are dark wells with a gold hairline and nothing inside — the \"icon floating in an empty well\" the clause forbids, reached from the other direction. Fix: bake downscaled crops (600x356 webp, <80 KB) under public/assets/hubtiles/, key HUB_TILE_ART to those (keeping _hubTileArtUrl override precedence), drop loading=\"lazy\" on above-the-fold tiles, and give .hub-portal-art a warm painted CSS ground so the pre-load rest state still reads as a stone plaque rather than a hole."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The title size-step fires two characters too early, so roughly half of every hub's tiles are set at 23px where the comp sets 26px — and the sizes jitter within a single row. index.html:115141 does `_nameLen >= 16 ? is-xlong : _nameLen >= 12 ? is-long`. I measured the real fit: with the step classes stripped at runtime on Forge, every title up to 14 characters reports scrollWidth == clientWidth (298/298) at 26px — i.e. it fits on one line with room to spare. Only \"Emergency Broadcast\" (19) actually overflows (411/298). The comp agrees: its own `.tile-name.long` is applied to DAILY CHALLENGE (15), and QUICK BATTLE (12) is left at full 26px. The result on screen is Forge row 1 reading THE LAB (26) / DECK BUILDER (23) / PACK OPENING (23) / EMERGENCY BROADCAST (19), where the comp holds one size across the row. Ragged type across a row is exactly what makes a menu read as auto-generated rather than art-directed. Fix: raise `is-long` to `>= 15` and `is-xlong` to `>= 18`; nothing in the CSS needs to change."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The four-layer grade stack plus the vignette crushes the painted plate, so ~60% of the frame is a featureless near-black field. Every piece of the FURNITURE now matches the comp — frame, corners, rail, nav, plaques, banners are effectively a pixel reproduction — which leaves the stage as the one thing separating the two images, and it is not close. Measured on the live render vs the comp render: upper sky band (420,150→1400,380) mean luminance 10.0 vs the comp's 28.3; right-middle band (1450,400→1880,700) mean 4.5 vs 26.4, with ZERO pixels above luminance 60 (max 69) against the comp's 10.1% above 60. The source plate has detail there — lit skyscraper windows and water reflections are visible as faint smudges at the right edge — it is the grade that is eating it. Concretely, public/main-menu/index.html:135-140 stacks .bg-grade.violet (multiply, bottom stop rgba(18,13,34,.64)) under .bg-grade.tone (multiply, bottom stop rgba(7,5,10,.60)) and then .vignette (line 147) on top, giving roughly 14% transmission at the bottom of the frame. The result reads as an excellent interface sitting on a dim wallpaper; the comp reads as painted key art with an interface in it. That is the studio/not-studio tell, and it is exactly the \"how much painted art is let through and at what luminance\" clause."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8,
+      "gap": "The admin top bar overflows and CLIPS live currency values between ~1200px and ~1400px wide. `.topbar` packs from flex-end with `.tb-left{margin-right:auto}`; `.divider-bookmark` is `flex:0 0 30px` and every `.grp` (star / coin / gem) is `flex:0 0 auto`, while `.plaque-player{min-width:0}` is the only shrinkable item — so once the CHARACTERS plaque + bookmark are present the plaque shrinks below its content and the notched `clip-path` on `.pl`/`.in` cuts the overflow off mid-glyph. Rendered admin-mode results (public/main-menu/index.html, all with real mm:data): at 1360 the gem icon paints but the \"2\" is severed and the bookmark divider is buried under the player plaque; at 1300 the whole Aza group is gone; at 1200 the Cinder balance renders as \"2,07\" — a truncated number the player will read as their actual balance. It self-heals at 1180 where the existing media query collapses the CHARACTERS label and shrinks the divider. This is exactly the failure the file's own comment claims to have designed out (\"a coin balance that disappears at 1180px is a bug the player reports as 'my Cinder vanished'\"), and the previous build showed all three values intact at 1280 admin, so it is a live-count regression in that configuration. Fix: give paintChars() a class hook on `.topbar` (e.g. `has-chars`) and apply the existing 1180px collapse rules (`.plaque-chars .lbl{display:none}`, narrow divider, tighter `.grp` padding) at ~1500px when that class is on; and make the value groups authoritative — `.plaque-player` should stop shrinking once `.name-btn` has hit its ellipsis floor rather than letting the clip-path eat digits."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "The default (non-admin, has-posts) footer is a hole. `_hdSocialHtml()` renders `+ Add special Links` only for admins, so for every real player the footer row is `FOLLOW ☐` hard left, then ~180px of empty parchment (378px inner width − ~79px Follow cluster − ~99px pager − gaps), then an orphan `.hd-fbar` hairline sitting 10px off the pager separating nothing, then `‹ • • • • ›`. The comp's footer is three evenly-gapped items (`Follow ☐ | + Add special Links`) that fill the rule edge-to-edge, and §2 pins that exact string. Fix: render the `+ Add special Links` / `✎ Edit links` slot ALWAYS — as the admin button when `isAdmin()`, and as the same-metrics static ink label (or a control that opens a \"links are set by the heralds\" note) for players — and drop `.hd-fbar` when the group to its left is empty so no divider is left dividing nothing. That one change closes the only place where a stranger's eye lands on unfinished layout instead of paper."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 8,
+      "gap": "The pager's dot strip collapses to nothing as soon as the feed has real content. `#md-dispatch .hd-dots` (index.html:113515) caps the strip at `max-width:71px;overflow:hidden`, but `.hd-dots span` (113516) sets only `width:6px` with no `flex-shrink:0`, so the dots are flex items that compress instead of clipping. Measured in the browser at 20 posts (the exact number `_hdFetch` requests): `#hd-dots` is 71x6 and every `#hd-dots span` is **0x6** — the position indicator is an empty 71px hole between ‹ and ›. At 12 posts the dots render as 0.9px vertical hairline ticks, which reads as a rendering fault, not a control. Degradation starts at 8 posts. The builder already knew this failure mode — `.hd-soc` carries `flex:none` so the social strip clips correctly — the dots just got missed. Fix: `#md-dispatch .hd-dots span{flex:0 0 6px}` so the strip clips to the first ~6 dots as intended, and because a clipped strip then always shows the same six, either window the rendered dots around `S.idx` in `_hdPaint` (dots.innerHTML build, ~113847) or swap the strip for an ink `3 / 20` counter in the same 12px Cinzel as `FOLLOW` once `posts.length > 6`."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "LOSES",
+      "score": 2,
+      "bar": 9,
+      "gap": "Every entrance rule in hub-transitions.css is `animation: … backwards` over a `from { opacity: 0 }` keyframe, so an animation whose clock never advances holds its element invisible forever. Measured on the settled sub-hub at document-timeline t=19,006ms: `.hub-banner` computed opacity 0 with `hubTxTitleIn` at playState `running`, currentTime `0`; `.hub-portal` computed opacity 0 with `hubTxTileLand` at playState `running`, currentTime `0`. The result is that Battle Hall renders as bare background art plus the two breadcrumb tabs — no title, no subtitle, no diamond rule, none of the seven tiles, no footer — and the reduced-motion path fails identically because it also uses `backwards`. The file's own §2 comment names this exact hazard and refuses `backwards` for `#mm-frame` on the grounds that it would be \"a black screen with the whole game behind it,\" then applies it to the entire sub-hub. Fix: stop letting visibility depend on an animation that may never tick. Either drive the entrance from `@starting-style` + `transition` on `opacity`/`translate`/`scale` (an untriggered transition leaves the element at its final, correct value) with the 40ms-per-tile cascade carried by `transition-delay`; or keep `@keyframes` but drop `backwards` everywhere and fold each element's lead-in into its own percentage offsets on one shared ~600ms timeline, so a never-started animation leaves the element at its natural rest state instead of at opacity 0."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 2,
+      "bar": 8,
+      "gap": "The sub-hub entrance blanks the entire hub. Every rule in §3 uses `animation-fill-mode: backwards`, and in the project's own mandated verification environment those animations are created but never advance (playState \"running\", currentTime frozen), so the `from{opacity:0}` keyframe is held forever. `node tools/shot.mjs battle` now renders background art, breadcrumb and currency rail and NOTHING else — no BATTLE HALL title, no subtitle, no keep-rule diamond, no side hero, no seven tiles, no Terms of Service footer. Same on forge/codex/arcanum. Deleting the sheet restores the full page (meanLum 14.7 / colors 712 without it vs 11.8 / 166 as shipped), so causation is this file alone — the working-tree index.html edits are all Herald's Dispatch and touch nothing here. The brief's own acceptance test (\"the settled frame must be identical to a run without this sheet … no tile left at opacity 0\") fails as hard as it is possible to fail, and the file's §2 comment shows the author identified this exact risk for #mm-frame, then knowingly accepted it for the tiles by mis-sizing the consequence as \"a bad frame\". It is a blank hub. Fix: never let a frozen animation hide content. Split the entrance in two — keep `backwards` only on the movement (`translate`/`scale`), where a frozen element is merely offset 18px and 4.5% small but fully visible, and run the opacity ramp as a separate `animation-fill-mode: none` component so a frozen element sits at its own rest opacity. Worst case becomes \"tiles slightly nudged\", never \"page empty\"."
+     }
+    ],
+    "u6-one-back-button": [
+     {
+      "verdict": "LOSES",
+      "score": 8.2,
+      "bar": 9,
+      "gap": "The Card Shop's Cinders balance plaque (`.shop-gems-pill`) is framed with `border: 1px solid` PLUS `clip-path: var(--keep-oct-6)`, so the clip shaves the border off all four 6px diagonals and the frame renders as four detached hairline segments with visible gaps at every corner — at 7x zoom the top rule stops ~6px short of each end and the side rules do the same. It reads as a rectangle drawn with four disconnected lines, i.e. a CSS box, and it sits 40px from the `← MENU` tab, which IS built correctly (gold-gradient parent cut by --keep-oct-10 + a `::before` face at inset:1px cut by --keep-oct-9, so 1px of gold survives on all eight sides). Same header, same intended material, two different levels of construction — and this file's own header comment at hub-chrome.css:99-103 documents exactly this trap (\"a `border` + `clip-path` loses the edge on the four diagonals and the control stops looking cut\") before committing it 380 lines later. Fix: rebuild `.shop-gems-pill` with the two-layer technique — drop the border, give the element the gold gradient background + --keep-oct-6 clip and `isolation:isolate`, and add a `::before { inset:1px; z-index:-1; clip-path: var(--keep-oct-5); background: linear-gradient(180deg,#171208,#0c0906); box-shadow: var(--keep-emboss), var(--keep-liner) }`."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8,
+      "bar": 8,
+      "gap": "The Crafting Station's back control (`.cft-back` / `#cft-back`, public/index.html:160127, styled at public/index.html:159680 with `border-radius:999px`) is still a gold rounded capsule — and it is opened by a tab INSIDE the Card Shop this unit just re-cut (`data-cs=\"cs-craft\"` at index.html:160209 → `App.screen='craftStation'`, index.html:159579). One click from the new tab plaque the player meets a different back object, inside the unit's own named screen. It is neither in hub-chrome.css's `:is()` list nor given the `keep-tab` class. The same holds for ~15 other real screens: `#vm-back` (Vendor Market, plain `.btn-secondary` pill, index.html:195970), `#ct-back` (index.html:202645), `#rlc-map-back` (index.html:185861), `#dj-leave` (index.html:153541), `#bma-back` (inline `border-radius:9px` purple rect, index.html:183663), `#bmt-back`, `#sp-admin-back`, `#ult-admin-back`, `#btn-research-back`, `#cx-err-back`. §4 says \"no page invents its own\"; a dozen still do. FIX: extend the `:is(…)` list in hub-chrome.css §1 with those ids/classes (they inherit all five states for free — the list is the whole mechanism), and put the literal `keep-tab` class on `#cft-back` and `#vm-back` so the two screens closest to the Card Shop are genuinely the same component rather than a lookalike."
+     }
+    ]
+   }
+  },
+  {
+   "n": 2,
+   "won": [
+    "u2-hub-tiles",
+    "u6-one-back-button"
+   ],
+   "open": [
+    "u1-keep-foundation",
+    "u3-main-menu-comp-a",
+    "u4-dispatch-and-warpath",
+    "u5-motion"
+   ],
+   "integration": [
+    {
+     "tag": "FIXED",
+     "head": "The keep shell's background was never actually <code>position:fixed</code>.",
+     "body": "<code>.spellbook-hub-bg</code> is <code>position:fixed; inset:0</code> (index.html:330) and the whole of hub-keep.css §C2 assumes that means “the viewport”. It did not. <code>#app</code> carries <code>.page-fade-in</code>, an animation declared <code>220ms ease-out both</code> whose 100% keyframe is <code>transform: translateY(0)</code> — and <code>fill-mode: both</code> retains that endpoint forever, so <code>#app</code> computes <code>transform: matrix(1,0,0,1,0,0)</code>. An identity matrix, but not <code>none</code>, and any non-<code>none</code> transform makes the element the containing block for every <code>position:fixed</code> descendant. index.html:155793 already documents this exact bug from the other side (the DVS modal is portalled out to <code>&lt;body&gt;</code> to escape it). Measured on Ruin Exchange, the one hub whose tiles overflow: viewport 993px, document 1678px, and the background came back <b>1678px tall with its top at &minus;300 after a 300px scroll</b> — so the painted plate was <code>object-fit: cover</code>-ed into a box 69% taller than the frame it is composed for, a different crop than the comp on every tall hub, and it scrolled away with the tiles instead of sitting still behind them. Every wash, vignette and grain layer in §C2 is sized off that same box. Fixed at the endpoint rather than the animation: a <code>keepPageFadeIn</code> whose only keyframe is 0%, so nothing is retained and <code>#app</code> returns to <code>transform: none</code>. Scoped with <code>:has(&gt; .spellbook-hub.is-sub)</code> so no other screen's fixed layout moves. Re-measured: transform <code>none</code>, background 993px, top 0 after the same scroll."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All four hubui sheets are still linked.",
+     "body": "<code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code>, <code>hub-transitions.css</code> at index.html:223670-223673 with the <code>?v=120w7</code> buster. No dead sheets. The three deploy knobs agree with each other at <code>v120w6</code> (<code>version.txt</code>, <code>window.BUILD_VERSION</code>, <code>sw.js CACHE_VERSION</code>); the sheet buster deliberately runs ahead so the CSS refetches."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting.",
+     "body": "Six selectors are declared more than twice across the four sheets, and every one is a media-query variant or the documented hub-keep × hub-transitions split — hub-keep owns the rest look, hub-transitions owns <code>animation</code>. Braces balance in all four files. One token, <code>--keep-oct-5</code>, is referenced at hub-chrome.css:627 without ever being declared, but it carries a full literal polygon fallback exactly as the project's convention requires, so it paints correctly; worth declaring for tidiness, not breakage."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "All 32 tile-art derivatives resolve.",
+     "body": "Every image path in the <code>HUB_TILE_ART</code> map (index.html:115174) was resolved against <code>public/</code> on disk: 32 referenced, 0 missing. No tile is falling back to the empty gradient well because of a bad path."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "Eight pages render, before and after the fix.",
+     "body": "main, battle, forge, exchange, codex, field, arcanum, cardshop — all captured and read, none blank, black or regressed. Mean luminance and colour counts are identical across the fix on seven of eight; only Ruin Exchange moves (16.5→16.6, 545→561 colours), which is the taller-than-viewport hub whose plate crop the fix corrects. Card Shop renders its signed-out empty state, as expected with no cloud session."
+    },
+    {
+     "tag": "CLEAN",
+     "head": "<code>node _synckcheck.mjs</code>",
+     "body": "All scripts clean, before and after."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The sub-hub background wash flattens the painted art into haze. public/src/hubui/hub-keep.css:523 adds a fifth wash layer the comp does not have — `linear-gradient(0deg, rgba(30,20,10,0.26), rgba(30,20,10,0.26))` — a flat, full-frame veil that is 0.26-opaque at EVERY pixel. Every layer in the comp's wash (comp-hub.html .bg-wash) is a gradient that reaches alpha 0 somewhere; its radial is `rgba(11,9,6,0)` at centre, so the plate's own contrast survives untouched in the middle and is only darkened toward the corners. A flat layer instead compresses the whole range toward its colour: it lifts the blacks and clips the highlights simultaneously. That is exactly what the pixels show — on identical patches our MEAN is equal or higher than the comp's while our PEAKS are 30-40% lower. The result is that the comp's left third reads as a painted armoured figure and tripod with real form, and ours reads as a uniform brown fog. Compounding it, the per-hub `--keep-bg-filter` values (hub-keep.css:455-488) run brightness 0.54 (codex), 0.56 (arcanum), 0.60 (forge), 0.62 (field) against the comp's single 0.80 recipe, so four of six hubs are darkened a further 25-33% on top of the veil. The comp is a §3 \"brightness(.80) saturate(.80)\" plate under gradients only; ours is a .54-.62 plate under a flat scrim, and it reads as a photo behind frosted glass rather than as painted art let through."
+     },
+     {
+      "verdict": "WINS",
+      "score": 9,
+      "bar": 9,
+      "gap": "The account-XP gauge inside the player pod is sheared into a broken shape by its own clip-path, and it is the one element in the shell that reads as an artifact rather than as metal. `public/src/hubui/hub-keep.css:782-791` gives `.acc-pill-bar` `width:46px; height:8px; clip-path: var(--keep-oct-6)`. A 6px octagonal cut on an 8px-tall box self-intersects: `calc(100% - 6px)` on the vertical axis is 2px, so the top and bottom corner cuts cross each other and the polygon collapses into a bowtie at both ends. Rendered (crop of live-battle.png at 7x, top bar, between the level shield and the Cinder count) it is not a carved slot — it is two tapered horizontal hairlines that never meet, with a detached 1px vertical stub floating off each end. At 0 XP, which is every signed-out first impression, the fill has zero width so there is nothing else to read, and this is the leftmost thing after the player's own level. The comp's pod is one uninterrupted stamped group; this one segment breaks the illusion. Fix: cut the corner to strictly less than half the height — add a `--keep-oct-3` polygon (or set `clip-path:none` and let the existing `inset 0 0 0 1px rgba(138,111,60,.55)` hairline close all four sides). The dark well, liner, top highlight and gold fill ramp are already right; only the clip is wrong."
+     }
+    ],
+    "u2-hub-tiles": [
+     {
+      "verdict": "WINS",
+      "score": 8.6,
+      "bar": 8.5,
+      "gap": "The art-panel colour grade. `public/src/hubui/hub-tiles.css:297` grades every tile image with `brightness(.78) saturate(.78) sepia(.20) contrast(1.06)`; the comp (docs/bar/comp-hub.html, `.tile-art img`) uses `brightness(.72) saturate(.88) contrast(1.05)` with NO sepia. The added sepia plus the 10-point saturation cut collapses every panel to one warm monochrome, so a row of tiles stops differentiating by subject. Isolated proof: /tmp/claude-0/-home-user-Playmythicspellbook/100f27e2-18bc-569c-9c2a-7fd9365dc961/scratchpad/ab/r2-u2-hub-tiles-craft/grade.png renders the same source under both grades — the WebP derivatives are faithful, the grade is the whole delta. The compounding case is Battle Hall's bottom row (zoom3.png, 2x): the comp's gym storefront / cracked earth / dartboard each read instantly by tone, while ours are three panels of identical brown, and btn-daily's art (`locations-sacred-grove.webp`) is unreadable mush at 1x — an art panel that is technically filled but reads as a failed image. Fix: drop `sepia()` from the rest, hover, `.is-art-bright`, `.is-art-dim` and disabled rules and take saturate back to ~.88, and re-point the btn-daily entry in the tile-art map (index.html ~115400) at an image with a legible subject."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.6,
+      "bar": 8.5,
+      "gap": "The art panel's colour grade. hub-tiles.css:317-326 lays a `background:rgb(168,104,44); mix-blend-mode:color; opacity:.34` layer over every panel, and every exposure bucket adds sepia on top (`sepia(.20)` default :297, `.16` dim :369, `.24` bright :372, `.30` locked :746). The comp's own rule is `filter:brightness(.72) saturate(.88) contrast(1.05)` — no sepia, no blend layer: it holds paintings DARK but keeps their hue. Ours holds them dark AND collapses them to one amber. Side by side at 2x, the comp's PLAY ONLINE is a cool blue-grey moonlit river-city sitting next to SEASON PASS's fire-orange; ours renders both the same brown, so the panels stop telling one destination from another — the exact job §3 gives them. It is also uneven: `color` blending cannot move a saturated magenta, so PACK CREATOR (Forge), WEBSITE (Arcanum) and WORLD DATA (Codex) stay violet while all their siblings go sepia, which reads as three broken tiles rather than a grade. Fix: drop the `::before` grade to ~.16 and remove `sepia()` from the default and bright buckets, keeping the brightness/contrast pull that does the real work; if the cool plates (The Lab's cyan monitors, Pack Opening's blue lightning) still fight the gold, tag those specific ids with an `is-art-cool` class in the HUB_TILE_ART map and give only that class the .34 grade, instead of taxing the whole library for three files."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "LOSES",
+      "score": 8.3,
+      "bar": 9.1,
+      "gap": "The background grade. §2's Background clause says the plate is \"kept exactly as-is — the UI must not brighten, blur or tint it beyond a soft vignette.\" public/main-menu/index.html instead stacks a `filter: saturate(.34) contrast(1.10) sepia(.10)` on `.bg` plus FOUR full-frame `.bg-grade` sheets, and one of them — `.bg-grade.warm{ background:#8a5a1e; mix-blend-mode:color; opacity:.26 }` — is a flat single-hue colour blend across the entire frame. That is precisely the move comp-main.html's own comment (lines 95-103) says was tried and rejected because \"it collapsed both temperatures into one khaki wash: the city went brown, the lightning stopped reading as gold because nothing around it was cool any more.\" Every one of those layers is a semi-opaque sheet, so they lift the shadows and veil the highlights at the same time. Net effect measured over the stage region (x 420-1900, y 120-820): live sits at p50=27, p95=79, p99=119, warmth(r-b)=+11.7; the comp sits at p50=14, p95=181, p99=208, warmth=+7.0. The comp is a near-black plate with struck gold on top — 167 luminance steps between median and p95. Ours is 52 steps of uniform tan haze. Consequence you can see without measuring: in the comp the gold furniture is unambiguously the brightest thing on screen; in ours the sky sits at 90-120 and competes with it, and the source plate's own gold lightning — the best asset in the image — is graded down into the same brown as the buildings and disappears. The plate reads as a hazy sepia photograph behind the UI rather than as painted art the UI is mounted on."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8.5,
+      "gap": "The top bar has no overflow strategy — its flex line spills LEFT out of its own box, so below ~1160px the player plaque climbs onto the stone rail and paints over the CHARACTERS plaque, which becomes both invisible and unclickable. `.topbar` is `position:fixed; left:calc(--frame-in + --rail-w + 24px); justify-content:flex-end` and `.hud` is a shrinkable item that also packs from `flex-end`. When the line no longer fits, negative free space makes both spill past their main-START edge. The code comment at line ~447 knowingly accepts this (\"the worst case is a visible overlap rather than a value the player cannot see at all\") — but the measured worst case is both at once: an overlap AND a control that is completely gone, and at very narrow widths the player's own name runs off the left edge of the screen. Fix: stop the line from spilling instead of choosing which way it spills."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 9,
+      "gap": "The body-copy fade mask on `.hd-ptext` (public/index.html:113532-113538) is unconditional, so on a normal full-length post the LAST line of the dispatch renders at roughly half ink — the sentence dissolves mid-line with nothing below it to scroll to. On the one light, highest-attention surface on the screen it reads as ink that ran out, not as an affordance. Fix: toggle the mask from JS the way `_hdFitSocial()` already toggles `.is-clipped` on the social strip — in `_hdPaint()`, after writing the post, set a class on `.hd-ptext` only when `el.scrollHeight > el.clientHeight + 1`, put the `-webkit-mask-image`/`mask-image` declarations behind that class, and shorten the ramp from 26px to ~12px so when it does fire it fades the sliced glyph row rather than a whole line of type."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.5,
+      "gap": "The `.hd-ptext` overflow mask is UNCONDITIONAL, so it fades the last line of body copy even when nothing is scrolled away. index.html ~113591 applies `mask-image:linear-gradient(180deg,#000 calc(100% - 26px),rgba(0,0,0,0))` to `#md-dispatch .hd-ptext` with no measurement. Rendered against the comp's own dispatch copy (four lines, exact fit, nothing hidden), the final line \"Warpath Gate before the hour turns.\" comes out at roughly 55-60% ink while lines 1-3 are full ink — the sentence visibly dissolves into the parchment. comp-main.html has that identical line at full ink. On the ONE light surface of the main menu this reads as the ink running out mid-sentence, and it actively lies: the fade signals \"there is more below\" when the post is complete. It is not an edge case — 3-4 line posts are the normal length for this 280px card. Fix: reuse the pattern the same file already contains 40 lines earlier for the social strip. `_hdFitSocial` measures `strip.scrollWidth > strip.clientWidth + 1` and toggles `.is-clipped`; do the same vertically at the end of `_hdPaint` (after `body.innerHTML = …`, so the box has been laid out) — `const t = body.querySelector('.hd-ptext'); if (t) t.classList.toggle('is-scrollable', t.scrollHeight > t.clientHeight + 1);` — and move the two mask declarations from `.hd-ptext` onto `.hd-ptext.is-scrollable`. Short and exact-fit posts then stay fully inked and the fade only appears when it is telling the truth."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "LOSES",
+      "score": 8,
+      "bar": 8.7,
+      "gap": "The warm-gold veil is at opacity 0 at the exact instant of the cut, so neither \"crossfade\" it is responsible for actually covers anything. `_playNavFlash()` fires at index.html:110897 inside `_renderImpl`, BEFORE `renderTitle()` rewrites the hub subtree and BEFORE `_mmTeardown()` calls `f.remove()` (index.html:113178) — all in one synchronous turn. So animation t=0 IS the swap frame. But `@keyframes hubTxNavVeil` (hub-transitions.css:~330) is `0%{opacity:0} 30%{opacity:1}`: at the first painted frame (~16ms of 520ms, through cubic-bezier(0.32,0,0.24,1) which starts slow) the veil is at roughly 5% and the blade has not started (`12%{opacity:1}` = 62ms). The seam is uncovered for the first 60-150ms — the veil arrives after the damage, and the blade is pure ornament rather than a cut-hider. This compounds with the cost R0 knowingly buys: on a real browser the new hub paints ONE frame of its fully settled state, then blinks back to its entrance start (bg at 0.28, all tiles at opacity 0) and rebuilds over 680ms. That pop-then-blink is precisely what a veil at full strength would hide, and it is naked. Deliverable 3 fails outright for the same reason: `#mm-frame` has an in-fade (`hubTxFrameIn`) but no exit, and the file's own comment nominates §1's veil as the out-fade — the veil is dark at the millisecond the iframe is removed, so the main menu still pops out. FIX (four numbers, one keyframe block, no JS, no index.html edit): make the veil start already-lit so it is covering the frame that carries the swap — `@keyframes hubTxNavVeil { 0%{opacity:.88} 20%{opacity:1} 62%{opacity:.7} 100%{opacity:0} }`. Leave the blade's own 0→1 ramp alone (the blade is the ornament, the veil is the cover) and leave the reduced-motion veil symmetric. Sanity-check the result with the negative-delay freeze-frame rig below at t=0/16/40ms; the plate must already read warm at t=16."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7.5,
+      "bar": 8,
+      "gap": "The \"crossfade\" never covers the cut it exists to hide. `@keyframes hubTxNavVeil` (public/src/hubui/hub-transitions.css:~330) starts at `0%{opacity:0}` and does not peak until 30% of 520ms (~156ms). But `_playNavFlash()` (index.html:113298) adds `.go` and `renderTitle()` rewrites `root.innerHTML` in the SAME synchronous turn, so the first painted frame after the swap has the veil at opacity 0 — the seam is fully exposed. The file's own comment asserts the opposite (\"the warm-up has to already be there when the page changes under it\"); its keyframes make that impossible. Worse, that same first frame is the one R0 deliberately paints at the settled style (the 1ms lead puts every entrance animation in its before phase), so the measured real-browser sequence per navigation is: old hub → 1 frame of the NEW hub fully drawn → new hub blanked → gold sweep + 680ms fade-up. That is a flash followed by a fade-up, not a crossfade — exactly the \"popping transition\" the lens fails."
+     }
+    ],
+    "u6-one-back-button": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "The Card Shop header's ornament rule. `html body .campaign-header.keep-header .. > div:first-child::after/::before` (public/src/hubui/hub-chrome.css §2) draws the gold hairline + diamond boss across the FULL width of the title block, and that block is `flex: 1 1 260px` — so on a 1920 viewport the rule runs ~1160px from x≈244 to x≈1400 and the diamond lands at its midpoint, x≈815, floating in ~600px of empty black with nothing above or below it. The sub-label ends at x≈806. The result reads as an accidental full-width divider that happens to have a gem stuck in it, not as the comp's ornament: comp-hub.html's title rule is a ~560px element sized to the text it underlines, with the diamond centred on the TITLE. Fix: stop hanging the rule off the flex child's full box. Give the rule its own fixed measure tied to content — e.g. drop the `left:0; right:0` on the `::after` and use `left:0; width:min(560px, 100%)` (or `right:auto; width:38ch`) with the `::before` diamond at `left:min(280px, 50%)` so the boss sits over the middle of the title/sub-label pair rather than the middle of the empty header. That single change removes the only element on this header that reads as CSS rather than metal."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "Two LIVE screen-level exits still ship the pre-redesign gold capsule, so §4's \"no page invents its own\" is not yet literally true — and one of them was missed because the selector list was built against dead code. (1) `public/index.html:28430-28445` `.recon-back-btn` (\"← Camp\", Reconstruction Settlement, markup at :217154) is verbatim the old object: `border-radius:999px`, 2px transparent gradient border, `text-shadow` gold, and a `transform:translateY(-1px)` hover lift — the exact rounded rectangle and cheap lift the bar names, with a comment above it that now lies (\"Same unified gold pill as the rest of the game's back buttons\"). (2) `.sdx-back#btn-pbl-back` (\"← Back to Opponent\", pre-battle loadout footer, markup at :119550, style at :4127, `border-radius:10px`) is missed while `.pbl-back-btn` — which is in hub-chrome.css's list — exists ONLY inside the dead `if (false)` branch at :119565. FIX: add `keep-tab` to the class attributes at :119550 and :217154 (both are handler-bound by `id`/`data-act`, so a class is free), add `.sdx-back` and `.recon-back-btn` to every selector list in hub-chrome.css §1 (including the disabled and reduced-motion blocks), and delete the legacy `.recon-back-btn` rest/hover/active rules at index.html:28430-28445 so the translateY lift dies with the capsule."
+     }
+    ]
+   }
+  },
+  {
+   "n": 3,
+   "won": [
+    "u1-keep-foundation",
+    "u3-main-menu-comp-a",
+    "u5-motion"
+   ],
+   "open": [
+    "u4-dispatch-and-warpath"
+   ],
+   "integration": [
+    {
+     "tag": "CLEAN",
+     "head": "Syntax, sheets and every menu surface.",
+     "body": "<code>node _synckcheck.mjs</code> passes all four scripts in <code>public/index.html</code> (the 11.5 MB main script included). All eight pages render through <code>tools/shot.mjs</code> and were looked at: main, battle, forge, exchange, codex, field, arcanum, cardshop. Nothing blank, nothing black, no page lost against round 2. The Card Shop's empty state is the signed-out state, not a regression — the harness never signs in."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "The four hub sheets are actually linked.",
+     "body": "All of <code>hub-keep.css</code>, <code>hub-tiles.css</code>, <code>hub-chrome.css</code> and <code>hub-transitions.css</code> carry a live <code>&lt;link&gt;</code> in <code>public/index.html</code> (lines 223720–223723, cache-busted to <code>?v=120w7</code>). No dead sheet this round — an unlinked stylesheet has silently cost a round before, so this is now checked explicitly rather than assumed."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "No duplicate rules fighting between sheets.",
+     "body": "Nine selectors appear in both <code>hub-keep.css</code> and <code>hub-transitions.css</code>, all of them <code>.spellbook-hub.is-sub</code> descendants. A property-level diff across the two files returns <b>zero</b> conflicts: keep declares the resting state, transitions declares only <code>animation:</code>. The seam between the layout unit and the motion unit is holding."
+    },
+    {
+     "tag": "FIXED",
+     "head": "The Follow links were clipped out of existence (u4).",
+     "body": "Confirmed independently with a headless probe built from the real <code>#md-dispatch</code> CSS and the real footer markup, at 0/1/2/3/6 published links × player/admin. The strip was <code>flex:0 1 auto; overflow:hidden</code> while the decorative third-slot legend was <code>flex:none</code>, so the 374px footer squeezed the one item holding real links: a player with 3 links got a <b>72px</b> strip inside a <b>48px</b> box, and with 6 links <b>150px</b> inside <b>48px</b>. Every icon past the first was invisible <em>and</em> unclickable — a straight regression from the wrapping row it replaced. Because flex-shrink is proportional, shrink ORDER is expressible: the legend and the admin button now carry <code>flex:0 1000 auto; min-width:0</code> against the strip's 1, so they give up their width before a single icon is touched. Re-probed: players now keep every icon at full width (3 links 72/72, 6 links 150/150). The strip stays shrinkable rather than <code>flex:0 0 auto</code> on purpose — at zero shrink an over-long row would escape <code>.hd-social</code> and paint over the pager, which is worse than the honest clip the <code>.is-clipped</code> fade already announces. Only the admin's own “✎ Edit links” label truncates now, at 6 links. Fixed as breakage, not as design: the stamp/tag ink treatment the other critic asked for is untouched and still belongs to the builder."
+    },
+    {
+     "tag": "FIXED",
+     "head": "The overflow fade never fired, in the one case it exists for.",
+     "body": "<code>_hdFitSocial()</code> measured once, synchronously, at mount — before the Cinzel swap re-widens the footer legend underneath it. The probe caught the result: <code>scrollWidth 72</code> against <code>clientWidth 48</code> with <code>.is-clipped</code> absent, i.e. a strip clipping silently with no fade to say so. It is now measured again on the next frame, which is exactly what its vertical twin <code>_hdFitBody</code> already does, and for the same stated reason."
+    },
+    {
+     "tag": "CHECKED",
+     "head": "The one surface the harness cannot photograph.",
+     "body": "Worth flagging for round 4: <b>the Herald's Dispatch cannot be screenshotted at all.</b> It is mounted at body level into <code>#mm-hud</code> only on the new-menu path (<code>public/index.html:113142</code>), and that path needs the <code>main-menu/</code> iframe to post <code>mm:ready</code> — which never happens under the harness, so the failsafe drops the app to the legacy master menu, where no dispatch markup exists. I confirmed it by forcing a main-hub render: the legacy fallback menu paints, the parchment card does not. So u4 is the one unit whose builders and critics are both working from hand-built probes rather than from the real surface, while every other unit gets looked at directly. That is a plausible part of why it is the last unit still in the gauntlet."
+    }
+   ],
+   "critiques": {
+    "u1-keep-foundation": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "The account segment in the player plaque breaks the comp's one-glyph-one-number segment rhythm. Every other cell in comp-hub.html's player group is exactly one mark plus one value fenced by 1px gold vrules (| ★ II | ◉ 2,076,571 | ▲ 2 |). Ours crams THREE unrelated marks into a single unfenced cell — the gold star, then a stroked shield glyph with the level number, then a 46px XP slot — so at 1x the top-right reads as \"★ ⓪1 ▭\", a mushy cluster the eye cannot parse, and it is the only place in the shell where the comp's hairline cadence fails. Fix: split it into two vrule-delimited segments the way every neighbour is built — `| ★ 1 |` (drop the redundant shield; the star already means \"account level\") and `| ▭ |` for the gauge — or, if the gauge must stay attached to the level, drop the star and run `| ⛊ 1 ▭ |` as a single two-atom cell. Either way one vrule must appear between the level and the gauge, because at 46px wide the empty slot currently reads as a fourth glyph rather than as a meter. Secondary: a \"v120w6\" build stamp sits in the bottom-right of all six hubs in ~10px monospace sans — the one element on the page outside the design language, and a direct violation of the no-sans-serif constraint; it should take the footer's gold-grey Cinzel small-caps treatment or be moved out of the hub surface."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The sub-hub entrance choreography re-fires on any in-place re-render, and the trigger is a control inside the player group this unit built. renderTitle() rewrites root.innerHTML wholesale (public/index.html:115594) and hub-transitions.css §3 uses node MOUNTING as its only trigger, so every render() that lands while a hub is open replays all 680ms: background push-in, title resolve, seven-tile stagger. The reachable path is one click deep in this unit's own shell — #hub-cloud-pill -> \"Sync Now\" (public/index.html, cmi-sync handler: `await cloudSyncProfile(); showToast(...); render();`), and the same on sign-in success. FIX: this unit owns the index.html edits, so stamp the guard there — in renderTitle() emit `data-entered` on the .spellbook-hub.is-sub root when App._keepEnteredHub === hub, set App._keepEnteredHub = hub after mount, then gate hub-transitions.css §3's eleven `animation:` rules behind `.spellbook-hub.is-sub:not([data-entered])`. hub-transitions.css:549 already names this exact fix and declines it because that unit \"ships index.html untouched\" — this unit does not, so the guard fell through the seam between the two."
+     }
+    ],
+    "u3-main-menu-comp-a": [
+     {
+      "verdict": "WINS",
+      "score": 9,
+      "bar": 9,
+      "gap": "The top bar's right terminus. The comp closes the bar with exactly TWO objects — the player plaque, then 31px of air, then the lone gear plaque — so the gear reads as a single piece of punctuation ending the row. Our build inserts a third plaque (music) with geometry identical to the gear (same height, same 1px gold border, same fill, same chamfer), and to fit it the inter-plaque gaps were squeezed from the comp's 31px to 15px and the whole player plaque was dragged 61px left (left edge x=1000 vs the comp's x=1061, widening the bookmark-to-plaque gap from 371px to 320px). Measured at y=70: comp = player 1061–1774 · gap 31 · gear 1805–1875; ours = player 1000–1735 · gap 15 · music 1750–1805 · gap 15 · gear 1820–1875. The result is that the right end reads as a crowded two-cell segmented control rather than the comp's confident single terminal glyph, and the bar's spacing rhythm goes from one clear caesura to an even, mechanical 15/15 run. This is the only place in the whole surface where our composition is visibly looser than the comp's — and it is a spacing/hierarchy decision, not a missing feature, so it is fixable without dropping the music control."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8.5,
+      "gap": "focus-visible on a nav row is visually indistinguishable from the active row, because the one thing meant to separate them never renders. `.nav-item:focus-visible .nav-ico{ box-shadow:0 0 0 2px rgba(232,200,119,.85) }` (public/main-menu/index.html:405) puts an OUTER ring on `.nav-ico` — but `.nav-ico` carries `clip-path:var(--oct-6)` (line ~336), and clip-path clips the element's entire painted output, outer box-shadow included. The declaration is dead. What survives on focus is a full-height gold marker bar plus a bright label — which is exactly the active row's treatment. Result: a keyboard user tabbing to Card Shop while Battle Hall is selected sees TWO full-height \"you are here\" bars in the rail at once, with only a wash-opacity difference (.62 vs 1) and one gold step of label colour (#f2dda2 vs #e8c877) between them. Hover, by contrast, is unambiguous — its marker is a 40% stub. Fix: move the ring inside the clip. `box-shadow: inset 0 0 0 2px rgba(232,200,119,.85)` on `.nav-ico > span` paints within the octagon and is not clipped away. Better still, give focus a marker the active row never uses — a segmented or double-hairline bar, or an inset hairline around the row's inner edge — so focus reads as \"the keyboard is here\", not \"this is your current section\"."
+     }
+    ],
+    "u4-dispatch-and-warpath": [
+     {
+      "verdict": "LOSES",
+      "score": 8.4,
+      "bar": 9,
+      "gap": "The NEW unread stamp (`#md-dispatch .hd-new`, index.html:113487) is the one element on the parchment that reads as UI rather than as paper, and it sits at the exact point the eye lands first. It is an OPAQUE flat `#65200e` box with `#efe1c1` type, clipped to a 4px octagon on a ~14px-tall chip, positioned `left:0` on `.hd-rule` — so (a) no paper grain passes through it, which is the single tell that separates an overprinted mark from a pasted sticker; (b) its cream type is the brightest thing on the sheet, brighter than the parchment ground, which inverts the hierarchy — at true 1x my eye goes pennant → NEW → title, where the comp goes title → pennant; (c) it severs the hairline rule at its origin, so the rule appears to emerge from the badge instead of running the width of the sheet; (d) §2 grants this card exactly one accent (the purple skull pennant) and this is a second saturated mark. FIX: make it an overprint rather than a chip. Drop the opaque fill and the octagon clip; use `mix-blend-mode:multiply` with `background:rgba(101,32,14,.82)` (or no box at all — `color:rgba(101,32,14,.86)`, 1.5px ink hairline rectangle at .5 ink, `rotate(-3deg)`) so the fibre and blotch layers of `.hd-paper` read straight through it the way a real wax/rubber stamp does, and move it to the RIGHT end of the rule or float it over the top-right of the body well so the hairline stays continuous edge to edge. The same \"lighter than the paper\" mistake repeats one row down on `.hd-tag` (113518), whose `rgba(255,250,235,.34)` fill is brighter than the parchment and makes the UPDATE chip float above the sheet — the same multiply/ink-only treatment fixes both, and fixing both is what collapses the crowded four-band top third back toward the comp's two."
+     },
+     {
+      "verdict": "LOSES",
+      "score": 7,
+      "bar": 8,
+      "gap": "The Follow links are clipped out of existence. `#md-dispatch .hd-soc-strip` (index.html:113578) is `flex:0 1 auto; overflow:hidden` and now shares one 374px footer row with the FOLLOW label (65px), a divider, the always-rendered 153px \"＋ Add special Links\" note (the non-admin `slot` at index.html:113903) and the pager (92px). Measured in a live DOM probe of the real markup + real CSS: a player account gets **strip clientWidth = 24px** no matter how many links are published (scrollWidth 46 at 2 links, 72 at 3, 150 at 6). Admin gets 53px. So icons 2..6 are outside an `overflow:hidden` box — invisible AND unclickable. The base build (commit 4dbc4f9) rendered `.hd-social` as its own row with `flex-wrap:wrap` and every icon visible, so Discord/X/YouTube/TikTok/Instagram/Twitch just disappeared from the main menu for every player with more than one link. Fix: the decorative label must yield to the live controls, not the reverse — for non-admins render the `hd-soc-note` only when `btns` is empty (it is literally the \"there are no links\" legend), and give `.hd-soc-strip` `flex:0 0 auto` while letting the note/`hd-soc-add` be the shrinking item; then re-measure `_hdFitSocial` on the next frame the way `_hdPaint` already re-measures `_hdFitBody` (index.html:114084 calls it once, synchronously — my probe caught `is-clipped=false` while scrollWidth 46 > clientWidth 24, i.e. the fade is missing in exactly the case it exists for, because the Cinzel swap widens the note after the measure)."
+     }
+    ],
+    "u5-motion": [
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The one-frame ghost on every sub-hub navigation is unmitigated, and the layer that is supposed to cover it mathematically cannot. R0's unfilled + 1ms-delay shape means the first painted frame after mount samples the animation at currentTime 0, inside the lead, so the browser paints ONE full frame (~16ms) of the completely settled hub, then blanks the whole tile band to opacity 0, then plays the 640ms entrance — the page appears, vanishes, then arrives. hub-transitions.css:396-405 claims the veil hides this, but `html body #md-nav-flash` is `mix-blend-mode: screen` over two 16%/11% ember radial gradients (lines 306, 328-332): screen can only ADD light, so a fully painted tile band and gold title stay completely legible through it. My isolation render at full veil+blade strength proves it — every tile, every badge and the BATTLE HALL title read perfectly through the sweep at peak. FIX, in-file, no index.html edit: `#md-nav-flash` is already the one element allowed to paint, so move `mix-blend-mode: screen` off the element and onto the two travelling pseudos, then give the veil an OPAQUE warm-black bottom layer (e.g. `linear-gradient(rgba(11,9,6,1), rgba(11,9,6,1))` beneath the ember radials) that is fully opaque for the first ~2 frames and gone by ~60ms while the gold blade keeps running on top. That converts the ghost frame into a deliberate one-beat dip through warm black under a torch pass — and it simultaneously gives #mm-frame the real exit cover that deliverable 3 currently only asserts."
+     },
+     {
+      "verdict": "WINS",
+      "score": 8.5,
+      "bar": 8,
+      "gap": "The one-frame flash-of-settled-content on every sub-hub mount, and the claim that the nav veil covers it. Because R0 puts a 1ms lead on every entrance with no fill, an animation sampled at currentTime 0 sits in its before-phase and contributes nothing — so in a real browser the hub paints ONE complete frame at rest (title, rule, all seven tiles, footer) and the NEXT frame snaps every one of them to opacity 0 before the entrance starts. I measured exactly that: probe at t=0 reads `bg{op=1.00} topbar{op=1.00} banner{op=1.00} foot{op=1.00} tiles=1,1,1,1,1,1,1`, and at t=60 the same elements read `topbar{op=0.16} banner{op=0.00} foot{op=0.00} tiles=0,0,0,0,0,0,0`. That is appear → blank → fade, on every navigation into every sub-hub, i.e. exactly the \"popping transition\" the clause exists to remove. The file's stated mitigation (§1's veil already lit at .88) does not hold up: the veil is a `mix-blend-mode: screen` wash of 16% ember / 11% body gold, and in my isolated capture of the sweep at t=0 (scratchpad/veil-0.png) the gold BATTLE HALL title and every tile read straight through it — it warms the frame, it does not conceal a content pop. The fix is to stop paying a shipped-product cost for a screenshot-harness constraint: give the §3 entrance rules `animation-fill-mode: backwards` (which is correct in every real browser — no leaked frame, no discontinuity) and neutralise the frozen-clock harness where the harness lives, by having tools/shot.mjs inject `*{animation:none !important}` for settled captures. Failing that, the one-line index.html version: have `renderTitle()` mount the hub root with a class and clear it inside a `requestAnimationFrame`, so the entrance begins on the frame after mount instead of one frame late."
+     }
+    ]
+   }
+  }
+ ]
+}
+</script>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="kicker">Mythic Spellbook</p>
+    <h1>The Gauntlet</h1>
+    <p class="dek">Main Menu Redesign &middot; Progress Ledger</p>
+    <div class="diamond"><i></i></div>
+  </header>
+
+  <div class="tally" id="tally"></div>
+
+  <h2>The Timeline</h2>
+  <p class="hint">Each unit's worst score of the round, against the bar it had to clear. Read left to right &mdash; the meters should march toward the marker.</p>
+  <div class="tlwrap"><table class="tl" id="timeline"></table></div>
+
+  <h2>The Units</h2>
+  <p class="hint">Every critic's biggest gap, in the critic's own words.</p>
+  <div id="units"></div>
+
+  <h2>The Integration Pass</h2>
+  <p class="hint">What the integrator fixed or verified between the critique and the commit. Outright breakage only &mdash; design belongs to the builders.</p>
+  <div id="ipass"></div>
+
+  <footer>Append only &middot; never overwrite an earlier round</footer>
+</div>
+
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('ledger').textContent);
+  var R = D.rounds, U = D.units;
+  var last = R[R.length - 1];
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  /* Backtick spans become <code>. The critic's text is not altered — this is
+     purely how it is set. Escaping happens FIRST so nothing in a critique can
+     inject markup. */
+  function ink(s) {
+    return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+  /* Which round did this unit win, if any? First round whose "won" list has it. */
+  function wonAt(id) {
+    for (var i = 0; i < R.length; i++) if (R[i].won.indexOf(id) >= 0) return R[i].n;
+    return null;
+  }
+  function critsFor(id, r) { return (r.critiques && r.critiques[id]) || []; }
+  /* The unit's standing in a round is set by its WORST critic — one loss is a loss. */
+  function worst(id, r) {
+    var cs = critsFor(id, r);
+    if (!cs.length) return null;
+    return cs.reduce(function (a, b) { return (b.score - b.bar) < (a.score - a.bar) ? b : a; });
+  }
+
+  /* ---- tally ---------------------------------------------------------- */
+  var nWon = U.filter(function (u) { return wonAt(u.id) !== null; }).length;
+  document.getElementById('tally').innerHTML = [
+    ['Rounds run', R.length],
+    ['Units won', nWon],
+    ['Still in the gauntlet', U.length - nWon],
+  ].map(function (s) {
+    return '<div class="stat"><b>' + s[1] + '</b><span>' + s[0] + '</span></div>';
+  }).join('');
+
+  /* ---- timeline ------------------------------------------------------- */
+  var head = '<tr><th>Unit</th>' + R.map(function (r) {
+    return '<th class="rd">Round ' + r.n + '</th>';
+  }).join('') + '</tr>';
+
+  var body = U.map(function (u) {
+    var w = wonAt(u.id);
+    var cells = R.map(function (r) {
+      if (w !== null && r.n > w) return '<td class="cell na">&mdash;</td>';
+      if (w === r.n) return '<td class="cell"><span class="seal">Won</span></td>';
+      var c = worst(u.id, r);
+      if (!c) return '<td class="cell na">&mdash;</td>';
+      var near = (c.bar - c.score) <= 1;
+      return '<td class="cell">' +
+        '<span class="sc' + (near ? '' : ' bad') + '">' + c.score +
+        ' <small>/ ' + c.bar + '</small></span>' +
+        '<span class="meter' + (near ? ' near' : '') + '">' +
+          '<i style="width:' + (c.score / 10 * 100).toFixed(1) + '%"></i>' +
+          '<b style="left:' + (c.bar / 10 * 100).toFixed(1) + '%"></b>' +
+        '</span></td>';
+    }).join('');
+    return '<tr><td class="u">' + esc(u.name) + '<em>' + esc(u.id) + '</em></td>' + cells + '</tr>';
+  }).join('');
+  document.getElementById('timeline').innerHTML = head + body;
+
+  /* ---- units ---------------------------------------------------------- */
+  document.getElementById('units').innerHTML = U.map(function (u) {
+    var w = wonAt(u.id);
+    var pill = w !== null
+      ? '<span class="pill won">Won &middot; Round ' + w + '</span>'
+      : '<span class="pill open">Still in the gauntlet</span>';
+
+    var rounds = R.map(function (r) {
+      var cs = critsFor(u.id, r);
+      if (!cs.length) return '';
+      var crits = cs.map(function (c, i) {
+        var win = c.verdict === 'WINS';
+        return '<div class="crit' + (win ? ' w' : '') + '">' +
+          '<div class="cmeta">' +
+            '<span class="vd ' + (win ? 'w' : 'l') + '">' + esc(c.verdict) + '</span>' +
+            '<span class="who">Critic ' + (i + 1) + '</span>' +
+            '<span class="sv"><b>' + c.score + '</b> against a bar of <b>' + c.bar + '</b></span>' +
+          '</div>' +
+          '<p class="verb">Biggest gap, verbatim</p>' +
+          '<p class="gap">' + ink(c.gap) + '</p>' +
+        '</div>';
+      }).join('');
+      return '<p class="rlabel">Round ' + r.n + '</p>' + crits;
+    }).join('');
+
+    return '<section class="unit">' +
+      '<div class="uhead"><h3>' + esc(u.name) + '</h3>' +
+        '<span class="uid">' + esc(u.id) + '</span>' + pill +
+        '<p class="ublurb">' + esc(u.blurb) + '</p></div>' +
+      '<div class="rnd">' + rounds + '</div></section>';
+  }).join('');
+
+  /* ---- integration pass ----------------------------------------------- */
+  document.getElementById('ipass').innerHTML = R.map(function (r) {
+    if (!r.integration || !r.integration.length) return '';
+    return '<p class="rlabel" style="margin:26px 0 0">Round ' + r.n + '</p>' +
+      '<div class="ipass">' + r.integration.map(function (e) {
+        return '<div class="ientry">' +
+          '<span class="itag ' + esc(e.tag) + '">' + esc(e.tag) + '</span>' +
+          '<div><h4>' + e.head + '</h4><p>' + e.body + '</p></div></div>';
+      }).join('') + '</div>';
+  }).join('');
+
+  document.title = 'The Gauntlet Ledger — Round ' + last.n;
+})();
+</script>
+</body>
+</html>

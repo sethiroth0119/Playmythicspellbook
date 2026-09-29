@@ -1,0 +1,90 @@
+{
+ "system": "Foundry",
+ "label": "Foundry & Salvage",
+ "icon": "🔨",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "foundryState",
+   "name": "foundryState",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 245471,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.foundry"
+   ],
+   "writes": [
+    "Profile.foundry"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "_foundryMergeState",
+   "name": "_foundryMergeState",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 229634,
+   "params": [
+    "local",
+    "cloud"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "salvageFor",
+   "name": "salvageFor",
+   "kind": "pure",
+   "file": "public/src/kitchen/kitchen.data.js",
+   "line": 3874,
+   "params": [
+    "ingId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "salvageMenu",
+   "name": "salvageMenu",
+   "kind": "pure",
+   "file": "public/src/kitchen/kitchen.data.js",
+   "line": 3877,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "salvageCinderCost",
+   "name": "salvageCinderCost",
+   "kind": "pure",
+   "file": "public/src/kitchen/kitchen.data.js",
+   "line": 3886,
+   "params": [
+    "recipeId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  }
+ ],
+ "edges": []
+}

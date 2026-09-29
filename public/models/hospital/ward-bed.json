@@ -1,0 +1,31 @@
+{
+  "file": "ward-bed.glb",
+  "bytes": 1781404,
+  "triangles": 36480,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.537,
+      -0.699,
+      -0.951
+    ],
+    "max": [
+      0.548,
+      0.686,
+      0.95
+    ]
+  },
+  "dims": {
+    "w": 1.085,
+    "h": 1.385,
+    "d": 1.902
+  },
+  "source": "assets-source/glb-masters/hospital/ward-bed.glb",
+  "packedBy": "tools/pack-glb.mjs",
+  "bed": {
+    "longAxis": "z",
+    "mattressTop": 0.484,
+    "headEnd": "-z",
+    "topSamples": 2125
+  }
+}

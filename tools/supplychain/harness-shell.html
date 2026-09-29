@@ -1,0 +1,102 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>supplychain · shell harness</title>
+<!-- The WHOLE screen, with no game behind it: public/src/supplychain/index.js on the
+     real data files and the fake bridge. Served by tools/supplychain/serve.mjs at
+     /__sc/harness-shell.html.
+
+     Query string
+       ?open=0            do NOT open on load (test the closed state / the door)
+       ?supplychain=1     exercise the DEEP LINK instead of calling open() (800 ms)
+       ?tile=medical      open with that tile selected      ?find=cloth  open with a search
+       ?nowebgl=1         refuse WebGL at the canvas API, so mountScene returns null and
+                          fallback.js takes the stage (the same door three.boot probes)
+       ?nothree=1         do not preload three.js — three.boot.js then tries its own
+                          relative URL and the CDN, which is what a player gets
+       ?scbridge=full|none|half|throw|reject|junk   fake-bridge personas
+       ?owns=… ?held=… ?gems=… ?admin=1 ?phase=2   (fake-bridge, see that file)
+       ?nofonts=1         skip Google Fonts (offline runs)
+
+     window.__scShell = { open, close, isOpen, state(), errors, logs } for a driver.
+     fake-bridge.js is a CLASSIC script and MUST stay above the module tag, exactly as
+     the real bridge block sits above the module tag in index.html. -->
+<link id="fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Rajdhani:wght@500;600;700&display=swap">
+<style>
+  :root{--bg-deep:#0c0b0a;--gold:#d4af37;--gold-bright:#f5d76e;--ink:#e8e0d0;--ink-dim:#a89888;color-scheme:dark}
+  html,body{margin:0;height:100%;background:var(--bg-deep);color:var(--ink);font:15px "Crimson Text",Georgia,serif}
+  /* a stand-in for the hub, so the overlay has something to cover and we can see
+     whether it really covers it */
+  #hub{min-height:100vh;padding:26px;background:radial-gradient(ellipse at 50% 30%,#241f16 0,#0c0b0a 70%)}
+  #hub h1{font-family:Cinzel,serif;color:var(--gold-bright);letter-spacing:.1em;font-size:19px;margin:0 0 4px}
+  #hub p{color:var(--ink-dim);margin:0 0 16px;font-size:13px}
+  #tile{font:inherit;background:rgba(23,21,15,.9);border:1px solid rgba(198,160,74,.4);border-radius:4px;
+        color:var(--gold-bright);padding:9px 16px;cursor:pointer;font-family:Rajdhani,sans-serif;letter-spacing:.08em}
+  #tile:hover{background:rgba(80,66,36,.45)}
+  #log{margin-top:18px;font-size:12px;color:var(--ink-dim);white-space:pre-wrap;max-height:40vh;overflow:auto}
+  .filler{opacity:.25;font-size:12px;margin-top:22px;line-height:1.7}
+</style>
+</head><body>
+<div id="hub">
+  <h1>Ruin Exchange (stand-in)</h1>
+  <p>The page the overlay opens over. If any of this shows through, the overlay is not covering the screen.</p>
+  <button id="tile" type="button">⛓ Supply &amp; Demand</button>
+  <div id="log"></div>
+  <div class="filler" id="filler"></div>
+</div>
+
+<script>
+  // ?nowebgl=1 removes the contexts at the API — the same door three.boot.js webglOk() probes
+  if (/[?&]nowebgl=1/.test(location.search)) {
+    const real = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (k, ...r) { return /^(webgl2?|experimental-webgl)$/.test(String(k)) ? null : real.call(this, k, ...r); };
+  }
+  if (/[?&]nofonts=1/.test(location.search)) { const f = document.getElementById('fonts'); if (f) f.remove(); }
+  // something long enough to scroll, so the body scroll lock is visible when it fails
+  document.getElementById('filler').textContent = Array.from({length:60},(_,i)=>'hub content line '+(i+1)).join('\n');
+</script>
+<script src="/__sc/fake-bridge.js"></script>
+<script>
+  /* three.js, preloaded the way index.html's own VFX loader has already done by
+     the time a player reaches the Ruin Exchange. three.boot.js returns
+     window.THREE immediately when it is present; with ?nothree=1 it is not, and
+     the boot falls back to its relative path and then the CDN — worth testing
+     separately, because on this harness the relative path does NOT resolve. */
+  if (!/[?&]nothree=1/.test(location.search)) document.write('<script src="/assets/vfx/three.min.js"><\/script>');
+</script>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  const logEl = document.getElementById('log');
+  const state = { errors: [], logs: [] };
+  window.__scShell = state;
+  const log = (m) => { state.logs.push(m); logEl.textContent = state.logs.slice(-24).join('\n'); };
+  window.addEventListener('error', (e) => { state.errors.push(String(e.message)); log('ERROR ' + e.message); });
+  window.addEventListener('unhandledrejection', (e) => { state.errors.push('reject: ' + String(e.reason)); log('REJECT ' + e.reason); });
+
+  const t0 = performance.now();
+  await import('/src/supplychain/index.js');
+  log('registered in ' + Math.round(performance.now() - t0) + ' ms · bridge ready=' + (window.__mg.supplyChain.bridge().ready));
+
+  const SCX = window.MythicSupplyChain;
+  Object.assign(state, {
+    open: (o) => SCX.open(o), close: () => SCX.close(), isOpen: () => SCX.isOpen(),
+    state: () => window.__mg.supplyChain.state(), api: SCX,
+  });
+
+  document.getElementById('tile').onclick = async () => {
+    const t = performance.now();
+    await window.openSupplyChain();
+    log('opened in ' + Math.round(performance.now() - t) + ' ms · ' + JSON.stringify(window.__mg.supplyChain.state()));
+  };
+
+  /* ?supplychain=1 is handled by index.js itself (the deep link). Everything
+     else opens through the door, unless ?open=0 asks for the closed state. */
+  if (q.get(SCXParam()) !== '1' && q.get('open') !== '0') {
+    const t = performance.now();
+    await SCX.open({ select: q.get('tile') || undefined, search: q.get('find') || undefined });
+    log('opened in ' + Math.round(performance.now() - t) + ' ms · ' + JSON.stringify(window.__mg.supplyChain.state()));
+  }
+  function SCXParam() { return 'supplychain'; }
+  document.body.dataset.ready = '1';
+</script>
+</body></html>

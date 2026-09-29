@@ -1,0 +1,263 @@
+{
+  "report": {
+    "mounted": true,
+    "stats": {
+      "built": true,
+      "rows": 128,
+      "cols": 16,
+      "verts": 2193,
+      "tris": 4096,
+      "shoreMin": 13.759396367817796,
+      "shoreMax": 14.34842466250807,
+      "z0": -12.450000000000001,
+      "z1": 15.85,
+      "refused": null
+    },
+    "verify": {
+      "ok": true,
+      "problems": [],
+      "stats": {
+        "built": true,
+        "rows": 128,
+        "cols": 16,
+        "verts": 2193,
+        "tris": 4096,
+        "shoreMin": 13.759396367817796,
+        "shoreMax": 14.34842466250807,
+        "z0": -12.450000000000001,
+        "z1": 15.85,
+        "refused": null
+      }
+    },
+    "fogAsFound": {
+      "near": 13,
+      "far": 22,
+      "tier": "low"
+    },
+    "fog": {
+      "near": 13,
+      "far": 22,
+      "tier": "low"
+    },
+    "cam": {
+      "x": 13.999999999999998,
+      "y": 15,
+      "z": 14.000000000000002,
+      "fov": 45
+    },
+    "cost": {
+      "off": {
+        "calls": 58,
+        "tris": 60924,
+        "geos": 72,
+        "tex": 10
+      },
+      "on": {
+        "calls": 59,
+        "tris": 65020,
+        "geos": 72,
+        "tex": 10
+      },
+      "dCalls": 1,
+      "dTris": 4096,
+      "dGeos": 0,
+      "dTex": 0
+    },
+    "owns": {
+      "meshes": 1,
+      "geometries": 1,
+      "materials": 1,
+      "ownTextures": 1
+    },
+    "buffer": {
+      "w": 1600,
+      "h": 900
+    },
+    "picture": {
+      "medium": {
+        "full frame": {
+          "seaVsNoSea": {
+            "changed": 36511,
+            "of": 1440000,
+            "pct": 2.54
+          },
+          "control": {
+            "changed": 0,
+            "of": 1440000,
+            "pct": 0
+          }
+        },
+        "bottom-right quadrant": {
+          "seaVsNoSea": {
+            "changed": 36511,
+            "of": 360000,
+            "pct": 10.14
+          },
+          "control": {
+            "changed": 0,
+            "of": 360000,
+            "pct": 0
+          }
+        },
+        "seaward crop": {
+          "seaVsNoSea": {
+            "changed": 36511,
+            "of": 172800,
+            "pct": 21.13
+          },
+          "control": {
+            "changed": 0,
+            "of": 172800,
+            "pct": 0
+          }
+        }
+      },
+      "low": {
+        "full frame": {
+          "seaVsNoSea": {
+            "changed": 35039,
+            "of": 1440000,
+            "pct": 2.43
+          },
+          "control": {
+            "changed": 0,
+            "of": 1440000,
+            "pct": 0
+          }
+        },
+        "bottom-right quadrant": {
+          "seaVsNoSea": {
+            "changed": 35039,
+            "of": 360000,
+            "pct": 9.73
+          },
+          "control": {
+            "changed": 0,
+            "of": 360000,
+            "pct": 0
+          }
+        },
+        "seaward crop": {
+          "seaVsNoSea": {
+            "changed": 35039,
+            "of": 172800,
+            "pct": 20.28
+          },
+          "control": {
+            "changed": 0,
+            "of": 172800,
+            "pct": 0
+          }
+        }
+      }
+    },
+    "fogTest": {
+      "medium": {
+        "seaPixels": 36511,
+        "meanSeaRGB": [
+          103,
+          168,
+          189
+        ],
+        "fogRGB": [
+          137,
+          156,
+          165
+        ],
+        "fogNear": 25,
+        "fogFar": 34,
+        "distanceFromFog": 43
+      },
+      "low": {
+        "seaPixels": 35039,
+        "meanSeaRGB": [
+          119,
+          161,
+          177
+        ],
+        "fogRGB": [
+          137,
+          156,
+          165
+        ],
+        "fogNear": 13,
+        "fogFar": 22,
+        "distanceFromFog": 22
+      }
+    },
+    "seaDistance": {
+      "nearestVertex": 15,
+      "furthestVertex": 98.8
+    },
+    "consistency": {
+      "summary": "temperate hydrology, 2 aquifers, an east coast, a lake",
+      "seaBody": true,
+      "inlandColumns": 4,
+      "east": {
+        "kind": "sea",
+        "yield": 0.4432201200934232,
+        "purity": 0.3,
+        "flow": 0,
+        "level": 1,
+        "strength": 0.4432201200934232,
+        "basin": -1,
+        "name": "Sea",
+        "salt": true
+      },
+      "west": {
+        "kind": "none",
+        "yield": 0,
+        "purity": 1,
+        "flow": 0,
+        "level": 0,
+        "strength": 0,
+        "basin": -1,
+        "name": "",
+        "salt": false
+      },
+      "factorEast": {
+        "factor": 0.943307539687555,
+        "atmos": 0.8,
+        "fromSource": 0.14330753968755494,
+        "capped": false,
+        "kind": "sea",
+        "purity": 0.3,
+        "usable": 0.3592585093367958
+      },
+      "factorWest": {
+        "factor": 0.8,
+        "atmos": 0.8,
+        "fromSource": 0,
+        "capped": false,
+        "kind": "none",
+        "purity": 1,
+        "usable": 1
+      },
+      "damOnCoast": "🌊 That is the sea. A dam needs a current and a fall to work with, and open salt water has neither — the coast is for a waterworks, not a turbine. Open the ⚡ panel and turn on Surface Water Flow to find a channel."
+    },
+    "outskirts": {
+      "meshes": 2,
+      "sampledVerts": 1605,
+      "vertsInSea": 0,
+      "cellsTheSeaRejected": 24,
+      "triangles": 30436
+    }
+  },
+  "logs": [
+    "[info] [city] quality -> medium (webgl2)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%",
+    "[info] [city] sky env map built in 15.8ms, 336x64 cubeUV, 4 materials",
+    "[log] [MythicCityBridge] cityReport {morale: 50, hunger: 0, sync: 0, alliedCamps: 3, reconPerHr: 0.36}",
+    "[warning] [LandValue] tenant ids no zone or district mix develops — listed as hand-placed only, not dropped: scrapmine, quarry, lumbercamp, fibercroft, fuelrig, deepmine, alloyworks, canecroft, farm",
+    "[info] [city] quality -> low (65 hitches/90f)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%",
+    "[info] [city] quality -> potato (74 hitches/90f)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%"
+  ]
+}

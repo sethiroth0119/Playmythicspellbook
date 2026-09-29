@@ -1,0 +1,25 @@
+{
+  "file": "intake-desk.glb",
+  "bytes": 1901228,
+  "triangles": 35880,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.952,
+      -0.69,
+      -0.461
+    ],
+    "max": [
+      0.951,
+      0.703,
+      0.46
+    ]
+  },
+  "dims": {
+    "w": 1.903,
+    "h": 1.393,
+    "d": 0.921
+  },
+  "source": "assets-source/glb-masters/hospital/intake-desk.glb",
+  "packedBy": "tools/build-intake-desk.mjs"
+}

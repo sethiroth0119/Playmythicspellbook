@@ -1,0 +1,53 @@
+{
+ "census": {
+  "tiles": 168,
+  "raised": 128,
+  "pctRaised": 76.2,
+  "maxElev": 1.02,
+  "byLevel": {
+   "0": 40,
+   "1": 72,
+   "2": 40,
+   "3": 16
+  },
+  "hfKey": "editor|14|12|host",
+  "maxLv": 3
+ },
+ "tile": {
+  "x": 8,
+  "z": 3,
+  "elev": 1.02,
+  "topX": 495.7,
+  "topY": 318.9,
+  "zeroX": 494.4,
+  "zeroY": 350.6,
+  "slabPx": 31.6,
+  "s": 36.53
+ },
+ "live": {
+  "energy": 61116,
+  "peakY": 345,
+  "centroidY": 354.9
+ },
+ "fixed": {
+  "energy": 98351,
+  "peakY": 323,
+  "centroidY": 336.8
+ },
+ "geom": {
+  "elevAwareY": 318.8,
+  "shippedY": 350,
+  "moves": 31.2
+ },
+ "others": {
+  "pillarBaseY": 350.6,
+  "unitFeetY": 318.9,
+  "pillarOffsetPx": 31.6,
+  "sparkSpawnY": "rnd(.05,.35) world — bounces on (p.y0||0), burst() takes no y0",
+  "dustCallSites": {
+   "walkLanding": "dust(...,14, tileElev(u.gx,u.gz))  ✓",
+   "summonLanding": "dust(wp.x, wp.z, 14)            ✗ no y0",
+   "summonUnitLanding": "dust(gw(gx,gz).x, gw(gx,gz).z, 20)  ✗ no y0"
+  }
+ }
+}

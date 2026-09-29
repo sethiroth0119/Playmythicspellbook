@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>supplychain · scene3d harness</title>
+<!-- The 3D map alone, on the real graph (data.js) and the fake bridge, no game.
+     Query string:
+       ?select=<nodeId>     focus a node after mount        ?flow=<resId>   highlightFlow
+       ?filter=<sysId>      setFilter({system})             ?status=planned setFilter({status})
+       ?t=<ms>              deterministic clock: renderNow(t) once, no RAF (pixel-stable shots)
+                            WARNING: this PAUSES the scene. Nothing repaints afterwards, so a
+                            test that then clicks, selects or highlights must call
+                            __scene.renderNow(t) itself before it photographs or measures —
+                            otherwise it reads the frame from BEFORE its own action and the
+                            camera appears never to move (that cost a debugging round).
+       ?hud=1               show the event log (off by default: the bar wants an uncaptioned frame)
+       ?nowebgl=1           refuse WebGL at the canvas API (the fallback path)
+     window.__scene / window.__graph / window.__events are for Playwright. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0c0b0a;color:#e8e0d0;font:15px "Crimson Text",Georgia,serif;overflow:hidden}
+  #host{position:fixed;inset:0}
+  #hud{position:fixed;left:12px;top:12px;max-width:380px;max-height:45vh;overflow:auto;background:rgba(23,21,15,.92);border:1px solid rgba(198,160,74,.34);border-radius:3px;padding:8px 10px;font-size:12px;color:#d9cbaa;display:none;z-index:5;white-space:pre-wrap}
+  #hud.on{display:block}
+  #nogl{position:fixed;inset:0;display:none;align-items:center;justify-content:center;font-family:Cinzel,serif;letter-spacing:.06em;color:#f5d76e}
+</style>
+</head><body>
+<div id="host"></div>
+<div id="hud"></div>
+<div id="nogl">NO WEBGL — mountScene resolved null (fallback.js takes over in the app)</div>
+<script src="/__sc/fake-bridge.js"></script>
+<script>
+  // ?nowebgl=1 removes the contexts at the API, the same door three.boot.js webglOk() probes
+  if (/[?&]nowebgl=1/.test(location.search)) {
+    const real = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (k, ...r) { return /^(webgl2?|experimental-webgl)$/.test(String(k)) ? null : real.call(this, k, ...r); };
+  }
+</script>
+<script src="/assets/vfx/three.min.js"></script>
+<script type="module">
+  import { getData } from '/src/supplychain/data.js';
+  import { mountScene } from '/src/supplychain/scene.js';
+  const q = new URLSearchParams(location.search);
+  const hud = document.getElementById('hud'); if (q.get('hud') === '1') hud.classList.add('on');
+  const events = []; window.__events = events;
+  const log = (s) => { events.push(s); if (hud.classList.contains('on')) { hud.textContent = events.slice(-24).join('\n'); } };
+  const data = getData(); window.__data = data; window.__graph = data.graph;
+  log('graph: ' + data.graph.nodes.length + ' nodes, ' + data.graph.edges.length + ' edges, ' + data.graph.lanes.length + ' lanes, errors ' + data.graph.report.errors.length);
+  const t0 = performance.now();
+  const scene = await mountScene(document.getElementById('host'), data.graph, {
+    onHover: (id, xy) => log('hover ' + id + (xy ? ' @' + Math.round(xy.x) + ',' + Math.round(xy.y) : '')),
+    onPick: (id) => log('pick ' + id),
+  });
+  window.__scene = scene;
+  if (!scene) { document.getElementById('nogl').style.display = 'flex'; log('mountScene -> null'); document.body.dataset.ready = '1'; }
+  else {
+    log('mounted in ' + Math.round(performance.now() - t0) + ' ms; ' + JSON.stringify(scene.stats()));
+    if (q.get('select')) scene.select(q.get('select'));
+    if (q.get('flow')) log('highlightFlow ' + q.get('flow') + ' -> ' + scene.highlightFlow(q.get('flow')));
+    if (q.get('filter')) scene.setFilter({ system: q.get('filter') });
+    if (q.get('status')) scene.setFilter({ status: q.get('status') });
+    if (q.has('t')) {
+      // deterministic frame: stop the RAF loop by disposing nothing — just render the requested clock on top
+      const t = +q.get('t') || 0; scene.pause();
+      // camera tweens are performance.now based: let the (1 ms under reduced motion, else 750 ms) tween land first
+      await new Promise((r) => setTimeout(r, 900));
+      const calls = scene.renderNow(t); log('renderNow(' + t + ') calls=' + calls);
+    }
+    document.body.dataset.ready = '1';
+  }
+</script>
+</body></html>

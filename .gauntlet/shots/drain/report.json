@@ -1,0 +1,339 @@
+{
+  "R": {
+    "logs": [],
+    "water": true,
+    "ocean": true,
+    "oceanStats": {
+      "built": true,
+      "rows": 128,
+      "cols": 16,
+      "verts": 2193,
+      "tris": 4096,
+      "shoreMin": 13.759396367817796,
+      "shoreMax": 14.34842466250807,
+      "z0": -12.450000000000001,
+      "z1": 15.85,
+      "refused": null
+    },
+    "apron": 3,
+    "domain": {
+      "x0": 0,
+      "x1": 26,
+      "z0": 0,
+      "z1": 23
+    },
+    "rule": [
+      {
+        "x": 23,
+        "z": 4,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 24,
+        "z": 4,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 25,
+        "z": 4,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 26,
+        "z": 4,
+        "sea": true,
+        "refused": false,
+        "why": null
+      },
+      {
+        "x": 23,
+        "z": 12,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 24,
+        "z": 12,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 25,
+        "z": 12,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 26,
+        "z": 12,
+        "sea": true,
+        "refused": false,
+        "why": null
+      },
+      {
+        "x": 23,
+        "z": 20,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 24,
+        "z": 20,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 25,
+        "z": 20,
+        "sea": false,
+        "refused": true,
+        "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. "
+      },
+      {
+        "x": 26,
+        "z": 20,
+        "sea": true,
+        "refused": false,
+        "why": null
+      }
+    ],
+    "run": {
+      "cells": 21,
+      "first": "6,12",
+      "last": "26,12"
+    },
+    "oneComponent": true,
+    "components": 1,
+    "afterLift": 2,
+    "rejoined": 1,
+    "structure": {
+      "count": 1,
+      "boxes": {
+        "26,12": {
+          "children": 12,
+          "min": [
+            14.061200001788139,
+            -0.30000000417232514,
+            0.17399999956786627
+          ],
+          "max": [
+            15.341600001192093,
+            0.650000000745058,
+            0.8260000004321337
+          ],
+          "size": [
+            1.2803999994039543,
+            0.9500000049173831,
+            0.6520000008642675
+          ]
+        }
+      }
+    },
+    "drainVerify": {
+      "ok": true,
+      "problems": [],
+      "apron": 3,
+      "drains": 1,
+      "drawn": 1
+    },
+    "shore": {
+      "lastPlateColumnWorldX": 11.5,
+      "plateEdgeWorldX": 12,
+      "oceanMeshMinX": 13.75939655303955,
+      "shoreAtRow12": 13.961531065470641,
+      "beachAt_23_12": true,
+      "beachAt_5_12": false,
+      "placeRefusal_on_plate": null,
+      "placeRefusal_in_sea": "🌊 That is the ocean. A Beach House cannot be built on water — the city stops at the shoreline. What DOES go out there is a 🌊 Sea Drain: place one, then drag 🚰 Pipes east to reach it."
+    },
+    "groupFound": true,
+    "pixels": {
+      "total": 1440000,
+      "control": 0,
+      "changed": 3066
+    },
+    "logsTail": []
+  },
+  "P": {
+    "land": {
+      "ok": false,
+      "why": "🌊 A Sea Drain stands IN the ocean — this cell is dry land. On this row the water starts at x=26: drag the shoreline east until the ghost turns green. The 🚰 Pipes layer draws the run that has to reach it — the drain does nothing until a main touches it."
+    },
+    "sea": {
+      "ok": false,
+      "why": "🌊 Cannot afford a Sea Drain (4,600 🔥)."
+    },
+    "count": 1,
+    "mains": {
+      "plumbed": false,
+      "pipes": 0,
+      "drains": 0,
+      "drainsLive": 0,
+      "parts": 0,
+      "reach": 1,
+      "backup": 0,
+      "sewer": 1,
+      "load": 0,
+      "treated": 0,
+      "capacity": 0,
+      "unserved": 0,
+      "unservedTiles": 0,
+      "governed": 0
+    }
+  },
+  "B": {
+    "rows": [
+      {
+        "z": 3,
+        "beach": [
+          {
+            "x": 21,
+            "world": 9.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 22,
+            "world": 10.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 23,
+            "world": 11.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          }
+        ],
+        "firstSea": 26,
+        "shoreWorldX": 14.211107857016632
+      },
+      {
+        "z": 12,
+        "beach": [
+          {
+            "x": 21,
+            "world": 9.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 22,
+            "world": 10.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 23,
+            "world": 11.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          }
+        ],
+        "firstSea": 26,
+        "shoreWorldX": 13.961531065470641
+      },
+      {
+        "z": 21,
+        "beach": [
+          {
+            "x": 21,
+            "world": 9.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 22,
+            "world": 10.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          },
+          {
+            "x": 23,
+            "world": 11.5,
+            "sea": false,
+            "beach": true,
+            "refusal": null
+          }
+        ],
+        "firstSea": 26,
+        "shoreWorldX": 14.028067419953324
+      }
+    ],
+    "oceanIsSeaAtLastColumn": false
+  },
+  "T": {
+    "pipesLive": 21,
+    "mains": {
+      "plumbed": true,
+      "pipes": 21,
+      "drains": 1,
+      "drainsLive": 1,
+      "parts": 1,
+      "reach": 1,
+      "backup": 0,
+      "sewer": 1,
+      "load": 0,
+      "treated": 0,
+      "capacity": 9,
+      "unserved": 0,
+      "unservedTiles": 0,
+      "governed": 0
+    },
+    "waterMainsSeam": {
+      "plumbed": true,
+      "pipes": 21,
+      "drains": 1,
+      "drainsLive": 1,
+      "parts": 1,
+      "reach": 1,
+      "backup": 0,
+      "sewer": 1,
+      "load": 0,
+      "treated": 0,
+      "capacity": 9,
+      "unserved": 0,
+      "unservedTiles": 0,
+      "governed": 0
+    },
+    "drainSeam": {
+      "count": 1,
+      "keys": [
+        "26,12"
+      ],
+      "apron": 3
+    }
+  },
+  "logs": [
+    "[info] [city] quality -> medium (webgl2)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%",
+    "[info] [city] sky env map built in 29.0ms, 336x64 cubeUV, 4 materials",
+    "[log] [MythicCityBridge] cityReport {morale: 50, hunger: 0, sync: 0, alliedCamps: 3, reconPerHr: 0.36}",
+    "[warning] [LandValue] tenant ids no zone or district mix develops — listed as hand-placed only, not dropped: scrapmine, quarry, lumbercamp, fibercroft, fuelrig, deepmine, alloyworks, canecroft, farm",
+    "[info] [city] quality -> low (68 hitches/90f)",
+    "[log] [MythicCityBridge] pushNodeBoost mock-supply 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-mining 0%",
+    "[log] [MythicCityBridge] pushNodeBoost mock-fuel 0%"
+  ]
+}

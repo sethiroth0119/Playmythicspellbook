@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>harness · fallback2d — the map without WebGL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #0c0b0a; color: #e8e0d0; font: 15px Georgia, serif; }
+  /* The strip is the harness's, not the feature's: a builder clicks it, a critic
+     drives the same controls through window.__scFallback. Kept above the host
+     so a screenshot of #host alone shows only the piece. */
+  #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid rgba(198,160,74,.2); background: #17150f; font-size: 13px; }
+  #bar input, #bar select, #bar button { font: inherit; background: #0c0b0a; color: #e8e0d0; border: 1px solid rgba(198,160,74,.34); border-radius: 3px; padding: 3px 6px; }
+  #status { color: #a89888; font-style: italic; flex: 1 1 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #host { min-height: 200px; }
+  /* ?panel=1 reproduces the SHIPPED shape: #sc-overlay is a fixed-height
+     scrolling panel, not the document. Round 3 claimed the jump bar was sticky
+     and it was not, and the claim survived because every harness shot let the
+     WINDOW scroll — a case where the bug happened to look the same. The panel
+     is the configuration where "sticky to what?" has a different answer, so it
+     is a URL away now instead of a bespoke critic script. */
+  body.is-panel #panel { position: fixed; inset: 60px 24px 24px; overflow: auto; border: 1px solid rgba(198,160,74,.34); background: #0c0b0a; }
+</style>
+<script src="/__sc/fake-bridge.js"></script>
+</head>
+<body>
+<div id="bar">
+  <label>select <input id="sel" placeholder="node id" size="12"></label>
+  <label>flow <input id="flow" placeholder="resource id" size="12"></label>
+  <label>filter <input id="filt" placeholder="live · planned · p7 · text" size="14"></label>
+  <button id="home" type="button">home</button>
+  <button id="dispose" type="button">dispose</button>
+  <span id="status">idle</span>
+</div>
+<div id="panel"><div id="host"></div></div>
+<script type="module">
+  import { getData } from '/src/supplychain/data.js';
+  import { mountFallback } from '/src/supplychain/fallback.js';
+
+  const q = new URLSearchParams(location.search);
+  const status = document.getElementById('status');
+  const host = document.getElementById('host');
+  /* ?host=900 constrains the HOST, not the window. This is the shipped shape —
+     an overlay panel inside a wide browser — and the case where viewport media
+     queries silently do nothing. Kept in the harness so the regression that
+     cost round 2 is one URL away, not a bespoke critic script. */
+  const hw = parseInt(q.get('host') || '', 10);
+  /* ⚠ In panel mode the width goes on the PANEL, not the host. Setting both
+     made the panel 342px (a 390 viewport minus its insets) while the host was
+     pinned to 390, so every card was clipped on the right — a harness artifact
+     that photographs exactly like a real overflow bug. The point of ?panel is
+     "what scrolls", so it owns the width and the host fills it. */
+  const panel = q.get('panel') ? document.body.classList.add('is-panel') || document.getElementById('panel') : null;
+  const sized = panel || host;
+  if (hw > 0) { sized.style.width = hw + 'px'; sized.style.margin = '0 auto'; sized.style.outline = '1px dashed rgba(198,160,74,.25)'; if (panel) { panel.style.right = 'auto'; panel.style.left = '50%'; panel.style.transform = 'translateX(-50%)'; } }
+
+  const data = getData();
+  const rec = window.__scFallback = { hovers: [], picks: [], ctl: null, graph: data.graph, errors: data.graph.report.errors.length };
+
+  const ctl = mountFallback(host, data.graph, {
+    onHover: (id, xy) => { rec.hovers.push({ id, xy }); status.textContent = 'hover ' + id + (xy ? ' @' + Math.round(xy.x) + ',' + Math.round(xy.y) : ''); },
+    /* the shell would do this; the harness stands in for it so a click is
+       visibly a selection */
+    onPick: (id) => { rec.picks.push(id); ctl.select(id); status.textContent = 'pick ' + id; },
+  });
+  rec.ctl = ctl;
+
+  document.getElementById('sel').addEventListener('change', (e) => ctl.select(e.target.value || null));
+  document.getElementById('flow').addEventListener('change', (e) => ctl.highlightFlow(e.target.value || null));
+  document.getElementById('filt').addEventListener('input', (e) => ctl.setFilter(e.target.value || null));
+  document.getElementById('home').addEventListener('click', () => ctl.home());
+  document.getElementById('dispose').addEventListener('click', () => { ctl.dispose(); status.textContent = 'disposed: host has ' + host.childElementCount + ' children'; });
+
+  if (q.get('select')) ctl.select(q.get('select'));
+  if (q.get('flow')) ctl.highlightFlow(q.get('flow'));
+  if (q.get('filter')) ctl.setFilter(q.get('filter'));
+  document.body.dataset.ready = '1';
+</script>
+</body>
+</html>

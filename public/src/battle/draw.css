@@ -1,0 +1,273 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   🃏 DRAW FX — deck → reveal → hand
+
+   The user: "draw card effects. When cards are added to the hand, reveal it to
+   the player."  Before this file there was nothing: `cardDraw` existed only as
+   six `playSfx('cardDraw')` calls. No motion, no flight, no reveal.
+
+   ── THE SAFETY MODEL (read before editing) ──────────────────────────────────
+   Game state is owned by the reducer (`drawCards` etc.). NOTHING here gates a
+   state change. Two rules make a desync structurally impossible:
+
+   1. The flying card is a GHOST living in #drawfx-layer, a `position:fixed`
+      sibling of the app on <body>. It is not in the hand, not in the board, and
+      the battle render (a full innerHTML rebuild) never sees it.
+
+   2. The only thing ever applied to a REAL hand card is the class
+      `.drawfx-arrive`, and that class is a pure CSS *entrance* animation with
+      `animation-fill-mode: backwards`. Backwards fill holds the FROM state only
+      while the animation is PENDING; the moment it finishes, is cancelled, or
+      the class is removed, the element reverts to its ordinary style — which is
+      fully visible. A card can therefore never be left hidden by this file, no
+      matter where the JS dies.
+
+   ── --hand-clear ───────────────────────────────────────────────────────────
+   `src/battle/fit.js` measures `.hand-strip` with getBoundingClientRect() and
+   writes `--hand-clear` from it. Everything here animates ONLY `transform`,
+   `opacity` and `filter` on the hand card. None of those participate in layout,
+   so the strip's border box — and therefore the reservation — never moves.
+   ⚠ Do not add width/height/margin/padding/font-size to `.drawfx-arrive`.
+
+   ── NO WHITE SCREEN ────────────────────────────────────────────────────────
+   #drawfx-layer has NO background and no full-viewport fill of any kind. The
+   only backdrop in the whole file is `.drawfx-halo`, a radial gradient that is
+   (a) local to the card, (b) sized in card-widths not viewport units, and
+   (c) built from near-black + warm amber. There is no white stop anywhere, no
+   additive blend mode, and nothing that covers the board.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#drawfx-layer {
+  position: fixed;
+  inset: 0;
+  /* Above the board (10-ish) and the hand strip (50); BELOW the piles modal
+     (1400) and the hand-limit discard picker (2200), so a real decision UI
+     always wins over a flourish. */
+  z-index: 1200;
+  pointer-events: none;
+  /* ⚠ never give this a background — see header. */
+  background: none;
+  overflow: hidden;
+  contain: layout style size;
+}
+
+/* ── The flying card ────────────────────────────────────────────────────────
+   Positioned at 0,0 and driven entirely by `transform: translate(x,y) scale(s)`
+   from the Web Animations API, so every frame is composite-only. Width/height
+   are set inline from the real hand card's measured rect, which is why this
+   works at any viewport size and at every one of the strip's five card-width
+   breakpoints without a single hard-coded coordinate. */
+.drawfx-ghost {
+  position: absolute;
+  left: 0; top: 0;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  opacity: 0;
+  backface-visibility: hidden;
+}
+
+/* Local dark halo — the "spotlight" for the reveal. Sized off the ghost, never
+   the viewport. Darkest stop is near-black; the warm stop is amber at low
+   alpha. Nothing here can wash out. */
+.drawfx-halo {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 260%; height: 210%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  opacity: 0;
+  background:
+    radial-gradient(closest-side,
+      rgba(255, 186, 92, 0.20) 0%,
+      rgba(120, 70, 20, 0.24) 34%,
+      rgba(8, 5, 16, 0.62) 62%,
+      rgba(8, 5, 16, 0.0) 100%);
+  will-change: opacity;
+  pointer-events: none;
+}
+
+/* The flip carrier. A 2D scaleX squash-and-swap, deliberately NOT a rotateY:
+   the board's own comment records that live CSS 3D projection is what caused
+   the board glitch, and a squash flip reads identically for a fraction of the
+   cost and none of the risk. */
+.drawfx-flip {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
+  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.72));
+}
+
+.drawfx-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 9px;
+  overflow: hidden;
+}
+/* ⚠ The back/front swap is driven by a WAAPI animation on the SAME timeline as
+   the squash, not by a setTimeout. A throttled timer would otherwise let the
+   card finish flipping before its face changed. These are the base states the
+   animations fill backwards/forwards from, and they are also what a
+   no-JS-animation fallback would land on: back visible, front hidden. */
+.drawfx-back  { opacity: 1; }
+.drawfx-front { opacity: 0; }
+
+/* ⚠ The back must be visible WITHOUT its image. It is the entire body of an
+   opponent's draw and the whole first half of yours, and the src comes from
+   whatever sleeve the player has equipped — one 404 and the flight becomes an
+   invisible box travelling across the screen. This plate is the floor; the
+   <img> lays over it and hides it whenever it does load. Dark stops only. */
+.drawfx-back {
+  /* opacity: 1 declared above with .drawfx-front's 0 — the pair is the swap's
+     base state and must stay together; this rule only adds the plate. */
+  border-radius: 9px;
+  background:
+    radial-gradient(120% 90% at 50% 22%, rgba(86, 62, 128, 0.55), rgba(18, 12, 30, 0.96) 72%),
+    linear-gradient(180deg, #1a1330, #0b0716);
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.42),
+              inset 0 0 14px rgba(0, 0, 0, 0.6);
+}
+.drawfx-back img {
+  width: 100%; height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.45);
+}
+
+/* The face is a live clone of the real hand-card button, so the drawn card is
+   pixel-identical to the card that lands in the hand — art, frame, cost orb,
+   level badge and all. Neutralise its interactivity and any state styling. */
+.drawfx-front > .hand-card {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  pointer-events: none !important;
+  opacity: 1 !important;
+  filter: none !important;
+  transform: none !important;
+  animation: none !important;
+  cursor: default !important;
+}
+.drawfx-front > .hand-card::before,
+.drawfx-front > .hand-card::after { animation: none !important; }
+
+/* Warm rim that blooms on the flip and fades through the settle. Inset ring +
+   outer glow only — no fill, so it cannot contribute to a white frame. */
+.drawfx-rim {
+  position: absolute;
+  inset: -2px;
+  border-radius: 11px;
+  opacity: 0;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 214, 122, 0.85),
+    inset 0 0 16px rgba(255, 168, 70, 0.35),
+    0 0 26px rgba(255, 160, 60, 0.42);
+  will-change: opacity;
+  pointer-events: none;
+}
+
+/* Caption under the reveal — the "legible before it is pretty" half of the
+   bar. Name is the headline; the sub-line carries type · cost, which is the
+   other thing you actually need at a glance. */
+.drawfx-cap {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  transform: translateX(-50%);
+  opacity: 0;
+  max-width: 320px;
+  padding: 6px 14px;
+  text-align: center;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(26, 19, 44, 0.94), rgba(10, 7, 20, 0.96));
+  border: 1px solid rgba(212, 175, 55, 0.55);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6);
+  will-change: opacity;
+}
+.drawfx-cap b {
+  display: block;
+  font-family: 'Cinzel', serif;
+  font-size: 0.98rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #ffd76a;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drawfx-cap span {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(226, 208, 255, 0.72);
+}
+
+/* ── Deck pile recoil ───────────────────────────────────────────────────────
+   The anticipation beat. The pile itself kicks as the card is pulled off it, so
+   the flight has a source rather than just appearing. Transform + filter only;
+   `.cardslot` already declares a transform for its hover, and this animation
+   overrides it for 260ms then hands it straight back. */
+.drawfx-pull { animation: drawfx-pull 260ms cubic-bezier(0.32, 0, 0.18, 1) both; }
+@keyframes drawfx-pull {
+  0%   { transform: none;                          filter: none; }
+  38%  { transform: translateY(3px) scale(0.955);  filter: brightness(1.22); }
+  100% { transform: none;                          filter: none; }
+}
+
+/* ── The real hand card's arrival ───────────────────────────────────────────
+   ⚠ THE SAFETY-CRITICAL RULE OF THIS FILE.
+
+   `backwards` fill holds 0% only while the animation is PENDING (i.e. during
+   `animation-delay`). Cancel it, remove the class, re-render the strip, or let
+   it finish — every one of those paths ends with the element at its ordinary,
+   fully-visible style. There is no `forwards`, no `both`, and no inline style
+   anywhere in the JS that could strand a card invisible.
+
+   Only transform/opacity/filter — nothing that can move the strip's box and
+   fight fit.js's --hand-clear measurement. */
+.hand-card.drawfx-arrive {
+  animation-name: drawfx-arrive;
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.16, 0.9, 0.28, 1);
+  animation-fill-mode: backwards;
+  /* --drawfx-in is written per-card by the JS so a 3-card draw staggers. */
+  animation-delay: var(--drawfx-in, 0ms);
+}
+@keyframes drawfx-arrive {
+  0% {
+    opacity: 0;
+    transform: translateY(15px) scale(0.90);
+    filter: brightness(1.9) saturate(0.6);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-5px) scale(1.045);
+    filter: brightness(1.25) saturate(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────
+   No flight, no travel, no scale. The card still gets REVEALED — the user's
+   actual ask is informational, and a still card that cross-fades in place
+   carries it without any vestibular motion. The JS reads the same media query
+   and switches to a static reveal at the anchor. */
+@media (prefers-reduced-motion: reduce) {
+  .drawfx-flip { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6)); }
+  .drawfx-pull { animation: none; }
+  .hand-card.drawfx-arrive {
+    animation-name: drawfx-arrive-rm;
+    animation-duration: 200ms;
+  }
+  @keyframes drawfx-arrive-rm {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+  }
+}

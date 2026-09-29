@@ -1,0 +1,25 @@
+{
+  "file": "containment-vault.glb",
+  "bytes": 1893476,
+  "triangles": 36148,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.938,
+      -0.955,
+      -0.893
+    ],
+    "max": [
+      0.927,
+      0.95,
+      0.891
+    ]
+  },
+  "dims": {
+    "w": 1.865,
+    "h": 1.905,
+    "d": 1.784
+  },
+  "source": "assets-source/glb-masters/hospital/containment-vault.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

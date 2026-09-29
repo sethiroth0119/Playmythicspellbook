@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>haul harness</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js", "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js" } }</script>
+<style>html,body{margin:0;background:#000}</style></head><body>
+<script>window.__HAUL_DEBUG = {};</script>
+<script type="module">
+import '/src/haul/index.js';
+const q = new URLSearchParams(location.search);
+const model = q.get('nomodel') ? null : { url: q.get('model') || '/models/trucks/freight_semi.glb', scale: 1, rotY: 90 };
+window.__HAUL_DEBUG.result = window.MythicHaul.play({ fromId: q.get('from') || 'N-01', toId: q.get('to') || 'N-12', resource: 'metal', cargoLabel: 'test', rig: { kind: 'lot', type: 'Truck', condition: q.get('cond') || 'Clean', model } }).catch((e) => { window.__HAUL_DEBUG.err = String(e && e.message || e); });
+</script></body></html>

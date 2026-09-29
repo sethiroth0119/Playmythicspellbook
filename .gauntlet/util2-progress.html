@@ -1,0 +1,774 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deathcare &amp; Utilities II — round log</title>
+<style>
+  :root{
+    --bg:#14121c; --panel:#1b1826; --panel2:#211d2e; --line:#2e2941;
+    --ink:#dcd9e6; --dim:#948da8; --dimmer:#6f6885;
+    --pass:#6ee7a8; --fail:#ff7a6b; --warn:#f6c667; --link:#8fb8ff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;padding:0 20px 80px;
+       font:14.5px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{padding:38px 0 4px;border-bottom:1px solid var(--line);margin-bottom:26px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em;font-weight:650}
+  .sub{color:var(--dim);margin:0 0 22px;font-size:14px;max-width:80ch}
+
+  .strip{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 30px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+        padding:11px 15px;min-width:132px;flex:1 1 132px}
+  .stat b{display:block;font-size:21px;font-weight:650;letter-spacing:-.01em;line-height:1.2}
+  .stat span{display:block;color:var(--dimmer);font-size:11px;text-transform:uppercase;
+             letter-spacing:.07em;margin-top:3px}
+  .stat.ok b{color:var(--pass)}
+  .stat.hot b{color:var(--warn)}
+  .stat.bad b{color:var(--fail)}
+
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--dimmer);
+     margin:46px 0 14px;font-weight:650;border-top:1px solid var(--line);padding-top:22px}
+
+  .honest{background:#231a1e;border:1px solid #4b2f38;border-left:3px solid var(--fail);
+          border-radius:10px;padding:20px 22px;margin:0 0 22px}
+  .honest h3{margin:0 0 4px;font-size:15px;color:#ffb3a8;font-weight:650}
+  .honest > p{margin:0 0 18px;color:#d9c6c8;max-width:84ch}
+  .honest > p:last-child{margin-bottom:0}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px}
+  .cols h4{margin:0 0 8px;font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+           color:var(--warn);font-weight:650}
+  .cols ul{margin:0;padding-left:17px}
+  .cols li{margin:0 0 9px;color:#cfc4cb;font-size:13.4px;line-height:1.55}
+  .cols li b{color:#fff;font-weight:600}
+
+  .siren{background:#2a161a;border:1px solid #6b2f35;border-left:3px solid #ff5f4a;
+         border-radius:10px;padding:20px 22px;margin:0 0 34px}
+  .siren h3{margin:0 0 8px;font-size:15.5px;color:#ff9b8b;font-weight:700;
+            letter-spacing:.01em}
+  .siren p{margin:0 0 11px;color:#e2cdcd;max-width:86ch}
+  .siren p:last-child{margin-bottom:0}
+  .siren b{color:#fff}
+  .siren .lede{font-size:15px;color:#ffd7cf}
+
+  table{border-collapse:collapse;width:100%;font-size:13.6px}
+  th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+  th{background:var(--panel2);color:#b7afcc;font-weight:600;font-size:11px;
+     text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
+  tbody tr:hover{background:#1a1725}
+  td.n{white-space:nowrap;color:var(--dim);font-variant-numeric:tabular-nums}
+  .pass{color:var(--pass);font-weight:650}
+  .fail{color:var(--fail);font-weight:650}
+  .score{font-family:var(--mono);font-weight:650;font-size:14.5px}
+  .score.up{color:var(--pass)}
+  .score.mid{color:var(--warn)}
+  .score.low{color:var(--fail)}
+  code,kbd{font-family:var(--mono);background:#252032;padding:1.5px 5px;border-radius:4px;
+       font-size:12.3px;color:#cfc7e4}
+  .closed{display:block;color:var(--pass);font-size:12.4px;margin:0 0 7px;
+          padding-left:15px;text-indent:-15px}
+  .closed b{color:#a9f5cc;font-weight:600}
+  .still{display:block;color:var(--fail);font-size:12.4px;margin:0 0 7px;
+         padding-left:15px;text-indent:-15px;font-weight:600}
+
+  .piece{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+         padding:22px 24px;margin:0 0 20px}
+  .piece.short{border-color:#5e2f39;background:#1e1720}
+  .piece > h3{margin:0 0 2px;font-size:17px;font-weight:650;letter-spacing:-.01em}
+  .piece .meta{color:var(--dimmer);font-size:12.3px;margin:0 0 16px;font-family:var(--mono)}
+  .piece .meta .v{color:var(--pass);font-weight:650}
+  .piece .meta .v.no{color:var(--fail)}
+  .piece table{margin-top:6px}
+  .piece .bar{color:var(--dim);font-size:13.2px;margin:0 0 14px;padding-left:13px;
+              border-left:2px solid var(--line);max-width:92ch}
+  .piece .bar b{color:#c9c1de;font-weight:600}
+  .ev{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0}
+  .ev span{background:#252032;border:1px solid #332c47;border-radius:5px;padding:3px 9px;
+           font-family:var(--mono);font-size:11.6px;color:#b9b1d0}
+  .ev span b{color:var(--pass);font-weight:650}
+  .ev span.no b{color:var(--fail)}
+  .next{margin:16px 0 0;padding:11px 14px;background:#1e2130;border:1px solid #2c3350;
+        border-radius:8px;font-size:13.2px;color:#b9c3dd}
+  .next b.h{color:var(--link);font-weight:600;display:block;font-size:11px;letter-spacing:.08em;
+          text-transform:uppercase;margin-bottom:3px}
+  .next.red{background:#251a1e;border-color:#4b2f38;color:#dcc6c8}
+  .next.red b.h{color:#ff9b8b}
+
+  pre{background:#0f0d16;border:1px solid var(--line);border-radius:9px;padding:16px 18px;
+      overflow-x:auto;font-family:var(--mono);font-size:12.6px;line-height:1.62;color:#c3bcd8;
+      margin:0 0 14px;white-space:pre}
+  pre .cmd{color:var(--warn)}
+  pre .good{color:var(--pass);font-weight:650}
+  pre .dimx{color:var(--dimmer)}
+  .gatehdr{color:var(--dim);font-size:12.6px;margin:0 0 7px;font-family:var(--mono)}
+
+  .note{background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+        padding:14px 17px;margin:0 0 22px;color:var(--dim);font-size:13.3px;max-width:96ch}
+  .note b{color:var(--ink)}
+
+  footer{margin-top:46px;padding-top:20px;border-top:1px solid var(--line);
+         color:var(--dimmer);font-size:12.5px}
+  footer p{margin:0 0 7px;max-width:92ch}
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>Deathcare, resources &amp; the outbreak — round log</h1>
+  <p class="sub">node-city, branch <code>city-construction-timers</code>. Five pieces,
+  ten rounds. Four met their bar; <b>the fifth did not, and it is the one that can destroy
+  your buildings</b>. Read the red block before the tables.</p>
+
+  <div class="strip">
+    <div class="stat hot"><b>4 / 5</b><span>pieces met the bar</span></div>
+    <div class="stat"><b>10</b><span>rounds run</span></div>
+    <div class="stat bad"><b>1 SHORT</b><span>zombie risk (78)</span></div>
+    <div class="stat ok"><b>ALL CLEAN</b><span>index.html gate</span></div>
+    <div class="stat ok"><b>226 / 226</b><span>modules parse</span></div>
+    <div class="stat ok"><b>MP PASSED</b><span>13 test files</span></div>
+    <div class="stat hot"><b>0</b><span>commits · deploys · bumps</span></div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div class="siren">
+  <h3>🧟 The outbreak is unfinished and untuned — and it can fire</h3>
+  <p class="lede">Say it in those words, because a half-built outbreak that can fire is worse
+  than no outbreak at all. This is the state it is in right now, in the working tree:</p>
+  <p><b>It is live.</b> <code>/src/zombie</code> mounts from node-city's frame loop
+  (<code>public/node-city/index.html:40383</code>, <code>_zombieTick</code>) and arms itself
+  whenever <code>/src/mortality</code> is present — which is every city, because deathcare
+  shipped in the same run. <b>There is no kill switch and no config flag.</b> grep for
+  <code>enabled</code> or <code>disable</code> across <code>public/src/zombie/*.js</code>
+  returns nothing.</p>
+  <p><b>It destroys real buildings.</b> A breached wave calls
+  <code>ctx.damageTile(pick, st.destroy, '💥 The outbreak')</code> up to
+  <code>maxStrikes: 4</code> times, and above <code>razeRatio: 2.5</code> the strike
+  <em>destroys</em> rather than damages. That funnel is deliberately the only write path
+  (criterion 5 held), but it is still a live demolition path that has never been played.</p>
+  <p><b>It has never been tuned by a human.</b> Every number in
+  <code>public/src/zombie/tuning.js</code> — <code>arm: 60</code>, <code>interval: 1800</code>,
+  <code>pMax: 0.55</code>, <code>strPerBody: 2.4</code>, <code>deadCapFrac: 0.05</code> —
+  was chosen to make the model coherent, not because anyone sat with a city and felt it.
+  Whether the first outbreak lands as a fair consequence or as an unexplained mugging is
+  <em>completely unknown</em>.</p>
+  <p><b>There are no zombies.</b> No agent is spawned, no mesh, no scene handle. The whole
+  feature is a number, a card, a log line and some damaged tiles. <code>risk.js:22-30</code>
+  states this plainly as a deliberate deferral (no infection state machine, no district
+  spread, no walking horde) and that block is honest — but a player who reads "OUTBREAK
+  LIKELY" and then sees nothing walk is going to expect something the game does not have.</p>
+  <p><b>And the round-3 gap is still open.</b> When you build the graveyard that fixes it,
+  the card does not tell you it worked — see the piece below. So the one loop that would let
+  a player learn the system by playing it is the loop that is missing.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div class="honest">
+  <h3>Read this second: what is not done, what was cut</h3>
+  <p>Everything below was scored against a written bar. Passing a bar is not the same as
+  <em>finished</em>, and it is nowhere near the same as <em>played</em>. No human has touched
+  any of this. Every proof in this log came from a driven browser or a node harness. Nothing
+  is committed, nothing is deployed, no version knob was bumped, and no migration was run.</p>
+
+  <div class="cols">
+    <div>
+      <h4>Not done</h4>
+      <ul>
+        <li><b>The outbreak's feedback loop.</b> Round 3's gap is open: build burial capacity
+            and the meter does not visibly move, so the game never confirms your fix.</li>
+        <li><b>No infection state, no spread, no horde.</b> Deliberate and written down
+            (<code>risk.js:14-30</code>), but it means the outbreak is an event, not a system.</li>
+        <li><b>Nothing is persisted server-side.</b> No table, no RLS, no migration — all of
+            this run's state rides <code>MythicCitySave</code> in the local save blob.</li>
+        <li><b>No pixel measurement was re-run for this page.</b> The A/B deltas and controls
+            quoted in the round rows come from the round transcripts. This write-up re-ran the
+            three gates only. Treat every pixel number here as <em>reported</em>, not
+            <em>reproduced</em>.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Cut on purpose</h4>
+      <ul>
+        <li><b>The Lane (<code>roadlane</code>) is retired.</b> Round 1 caught it orphaned —
+            deleted from the shop, never re-homed, still promised by research. It was not
+            rescued; it was <em>deliberately retired</em>: <code>retired: true</code> at
+            <code>index.html:3074</code>, dropped from <code>tra_basic</code>'s unlocks
+            (<code>progression/tree.js:84</code>). <b>Old saves with Lane tiles still load and
+            still render</b> — the BUILDINGS row and <code>isRoadType</code> were kept for
+            exactly that — but nobody can ever lay another one.</li>
+        <li><b>No second waterline, no third opinion.</b> The resource map refuses and records
+            <code>stats.refused</code> when <code>MythicWater</code> is absent rather than
+            inventing a field. Delete the module and production is byte-identical.</li>
+        <li><b>No new UI for the deathcare complaint.</b> It rides the existing vitals card,
+            talk dialog and phone feed. That was the bar, and it means the shortfall is easy
+            to miss if you are not looking.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>A human must verify by playing</h4>
+      <ul>
+        <li><b>Play until an outbreak fires.</b> Nothing else on this list matters as much.
+            All outbreak evidence is simulated time in a headless harness. Confirm the first
+            one lands inside the window the card promised, and that losing a building to it
+            reads as a consequence you could have prevented.</li>
+        <li><b>Look for a road in the build tab and fail.</b> Roads left BUILD entirely.
+            Whether a player's hand goes to the 🛣 Roads tab without being told is a
+            question only a person can answer.</li>
+        <li><b>Load an old save with Lane tiles.</b> Confirm the retired carriageway reads as
+            legacy, not as a bug.</li>
+        <li><b>Find the sea drain.</b> It may only stand in open water. Does anyone discover
+            that rule without reading the refusal message twice?</li>
+        <li><b>Read the resource map at real zoom on a real monitor.</b> Determinism and
+            threshold agreement are proven; legibility is not.</li>
+        <li><b>The 15th rail launcher.</b> The outbreak card took a seat the RAILS comment
+            said was the last one. Check the rail does not overflow at your window size.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>How to read the score column.</b> Two of these pieces were scored on a different scale
+  from the other three — "Citizens die" ran 0.8 → 4.4 while the rest ran 5 → 78 → 87 → 88.
+  The scores are shown exactly as recorded and <b>must not be compared across pieces</b>.
+  What is comparable within a piece is the direction: every round moved up, and every round
+  moved up because a specific named gap was closed in code.
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>The five pieces, round by round</h2>
+
+<!-- ─── PIECE 1 ─────────────────────────────────────────────────────── -->
+<div class="piece">
+  <h3>1 · Utility overlays on demand, and roads out of BUILD</h3>
+  <p class="meta">2 rounds · 72 → 87 · <span class="v">MET THE BAR</span> ·
+     public/src/roads, /netdrag, /power, /water · public/node-city/index.html</p>
+  <p class="bar"><b>The bar:</b> a wire or a pipe is a thing you go and look at, and the build
+  tab contains only things the build tab builds. No id for which <code>isRoadType()</code> is
+  true may appear in <code>BUILD_SECTIONS</code> or <code>BUILD_ORDER</code> — including the
+  auto-'Other' orphan section — while old saves keep their roads and every class stays
+  placeable from the roads tab.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>The gap it ended on</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td>
+        <td class="n score mid">72</td>
+        <td class="fail">SHORT</td>
+        <td>
+          <b>The Lane was made unbuildable by any path, silently, while research still
+          promised it.</b> <code>roadlane</code> is a full carriageway type with its own
+          <code>ROAD_CLASSES</code> row and its own BUILDINGS row at cinder 3. The round
+          deleted it from both registries alongside <code>road</code> — literally correct,
+          since <code>isRoadType('roadlane')</code> is true — but nothing re-homed it. The
+          roads tab was never its home: <code>roads/index.js:220</code> hardcodes
+          <code>C.place('road', …)</code> and its nine palette chips are <em>classes</em>
+          riding on type <code>road</code>. Driven: <code>_apply(cells,'avenue')</code> writes
+          <code>road/avenue</code>, never <code>roadlane</code>. Meanwhile the comment at
+          <code>index.html:3842</code> claimed both types were "now laid ONLY from the 🛣
+          Roads tab" — false for half its subject, and it was the sentence the deletion rested
+          on. Player-facing half: <code>progression/tree.js:302</code> still gated
+          <code>[...roadTypes(), 'depot']</code>, so the "Basic Transportation Services" node
+          rendered a live "Lane · building" row and
+          <code>MythicProgress.buildingUnlocked('roadlane')</code> answered true — a research
+          reward for a building with no affordance anywhere in the game.
+        </td>
+      </tr>
+      <tr>
+        <td class="n">2</td>
+        <td class="n score up">87</td>
+        <td class="pass">PASS</td>
+        <td>
+          <span class="closed">✔ <b>Closed by retiring the type deliberately, not by
+          rescuing it.</b> Verified in the tree just now:
+          <code>index.html:3074</code> now reads
+          <code>roadlane: { id:'roadlane', name:'Lane', ico:'🛣️', retired: true }</code>;
+          the comment block at <code>:3906-3941</code> was rewritten to say
+          "<em>'roadlane' IS RETIRED. ⚠ THE ROADS TAB DOES NOT LAY IT AND NEVER DID</em>"
+          instead of claiming a re-home; the BUILDINGS row stays because
+          <code>costOf('roadlane')</code> must still price tiles written into existing saves
+          (<code>:3120</code>, <code>:3941</code>); and
+          <code>progression/tree.js:84-85</code> records why the unlock was dropped.</span>
+          No further gap. The comment now matches the code, which is the standing CLAUDE.md
+          rule the round-1 finding was actually about.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>BUILD_SECTIONS road ids <b>0</b></span>
+    <span>'Other' orphan section <b>0</b></span>
+    <span>loadState path <b>untouched</b></span>
+    <span>/src/roads mounts <b>before loadState</b></span>
+    <span>Grid Connector visible at zero-armed <b>yes</b></span>
+    <span>setMode('place') mid-drag → controls.enabled <b>restored</b></span>
+  </div>
+  <div class="next">
+    <b class="h">What a person still has to judge</b>
+    Whether removing every road from BUILD is discoverable. The grep is clean and the roads
+    tab works; nobody has watched a player look for a road and not find one.
+  </div>
+</div>
+
+<!-- ─── PIECE 2 ─────────────────────────────────────────────────────── -->
+<div class="piece">
+  <h3>2 · The resource map — groundwater first, and it means something</h3>
+  <p class="meta">2 rounds · 78 → 88 · <span class="v">MET THE BAR</span> ·
+     public/src/resmap (5 files, 1,868 lines, new)</p>
+  <p class="bar"><b>The bar:</b> the player opens the map and sees <em>located deposits</em>
+  rather than one soft blur, and can act on what they see. Deterministic per cityId, the map
+  and the number agree to 2dp, siting stops being blind, one mesh and one material (576 draw
+  calls is the rejected alternative), and a pixel A/B with a control beside it.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>The gap it ended on</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td>
+        <td class="n score mid">78</td>
+        <td class="fail">SHORT</td>
+        <td>
+          <b>The groundwater layer drew a threshold the game does not enforce</b> — bar item
+          2's named failure mode, on the headline layer.
+          <code>resmap/tuning.js:231</code> read <code>mark: 0.12, markFrom: 'water'</code>,
+          but <code>markFrom</code> was declared and <em>never read</em> (grep: 2 hits, both in
+          tuning.js). So the outline was a hardcoded <code>0.12</code> while
+          <code>/src/water</code>'s placement gate cuts at
+          <code>WATER.aquifer.minRead = 0.10</code>, and <code>overlay.js:145</code> painted
+          everything above the shared <code>fieldAlpha.floor</code> of <code>0.02</code>.
+          <code>/src/water/overlay.js:168-176</code> already cuts its own paint at exactly
+          <code>minRead</code> and writes down why — "promised water on tiles where a
+          waterworks would get the dry floor… worse than no overlay" — and resmap
+          re-introduced that exact defect.
+          <b>Measured over 60 cities:</b> the layer painted 98.5 tiles/city of which 27.5
+          (27.9%) the gate <em>refuses</em>, and the outline excluded 5.1 legal sites (7.2%).
+          Driven live: tile 20,3 reads 0.0234, painted <code>rgba(35,53,62,29)</code>, panel
+          printed "2%", and <code>tryPlace('waterstation',20,3)</code> refused with a message
+          pointing at the very map that contradicted it.
+        </td>
+      </tr>
+      <tr>
+        <td class="n">2</td>
+        <td class="n score up">88</td>
+        <td class="pass">PASS</td>
+        <td>
+          <span class="closed">✔ <b>Closed by making the owner the only source of the line.</b>
+          Verified in the tree just now: <code>resmap/index.js:195</code> resolves
+          <code>OWNER_LINE[spec.markFrom]</code> and calls it, so the threshold is read from
+          <code>/src/water</code> at draw time; <code>fields.js:325-327</code> now
+          <em>fails validation</em> if a read-through row carries a typed <code>mark</code>
+          or omits <code>markFrom</code> ("a read-through layer takes its line from
+          <code>markFrom</code>"); <code>tuning.js:258</code> states it as a rule — "SO NO
+          THRESHOLD IS TYPED HERE"; and <code>overlay.js:146</code> cuts a read-through row's
+          paint at the owner's threshold instead of the generated fields' alpha floor.
+          <code>index.js:121</code> keeps the defect on record because it shipped.</span>
+          Two numbers can no longer disagree, because there is now only one number.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>determinism: same cityId <b>byte-identical</b></span>
+    <span>two cityIds <b>differ</b></span>
+    <span>Math.random / Date / gradeOf in field path <b>0</b></span>
+    <span>module deleted → production factor <b>1</b></span>
+    <span>per-tile mesh loop <b>0</b></span>
+    <span>MythicWater absent → <b>refuses, stats.refused</b></span>
+  </div>
+  <div class="next">
+    <b class="h">What a person still has to judge</b>
+    Legibility. The layer is correct and it agrees with the sim to 2dp — but whether a
+    deposit reads as a <em>place you go and build</em> at ordinary zoom on an ordinary
+    monitor has not been looked at by an eye.
+  </div>
+</div>
+
+<!-- ─── PIECE 3 ─────────────────────────────────────────────────────── -->
+<div class="piece">
+  <h3>3 · A real sewer: intake, station, and a drain that may only stand in the ocean</h3>
+  <p class="meta">1 round · 88 · <span class="v">MET THE BAR — first round</span> ·
+     public/src/water/drain.js (588 lines, new) + network.js, netui.js, tuning.js</p>
+  <p class="bar"><b>The bar:</b> the pipe network is a system a player plans, and the ocean is
+  a place, not a wall. One component across the shoreline; the drain's rule absolute and
+  explained; not an invisible building; the shore buildable; shown equals billed; save
+  integrity under a foreign cityId.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>The gap it ended on</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td>
+        <td class="n score up">88</td>
+        <td class="pass">PASS</td>
+        <td>
+          <span class="closed">✔ <b>No gap. The only piece in this run that cleared its bar on
+          the first round.</b></span>
+          The reason it did is worth recording, because it is the pattern the other four
+          pieces had to be pushed into: <code>network.js</code> was written
+          <em>node-importable on purpose</em> — no DOM, no <code>window</code>, no THREE — so
+          the component algebra, the per-component solve, the cap arithmetic and the save
+          round-trip were all provable in a harness before a single pixel existed. The sea
+          test delegates entirely to <code>MythicOcean.isSea</code>/<code>openWaterAt</code>;
+          grep shows <b>no second coastline arithmetic anywhere in the diff</b>, which is the
+          discipline that stopped this piece from growing a rival waterline the way the
+          resource map nearly did.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>land→sea run <b>1 component</b></span>
+    <span>lift one pipe → <b>2</b>, neighbour district <b>byte-identical</b></span>
+    <span>drain on land <b>refused, names open water</b></span>
+    <span>buildMesh arm <b>exists, bbox non-zero</b></span>
+    <span>preview chip cells = charged cells <b>equal at the cap</b></span>
+    <span>payCost per run <b>1</b></span>
+    <span>foreign cityId blob <b>refused, not merged</b></span>
+    <span>document listeners <b>1 (rig.js)</b></span>
+  </div>
+  <div class="next">
+    <b class="h">What a person still has to judge</b>
+    Discoverability of the ocean-only rule, and whether the newly buildable beach reads as
+    beach rather than as a place the terrain forgot to stop you.
+  </div>
+</div>
+
+<!-- ─── PIECE 4 ─────────────────────────────────────────────────────── -->
+<div class="piece">
+  <h3>4 · Citizens die, and the city has somewhere to put them</h3>
+  <p class="meta">2 rounds · 0.8 → 4.4 <span style="color:#6f6885">(different scale — see the
+     note above)</span> · <span class="v">MET THE BAR</span> ·
+     public/src/mortality (3 files, 703 lines, new)</p>
+  <p class="bar"><b>The bar:</b> death is a constraint you plan around, and the game never
+  tells you two different stories about the same person. The feed stops lying; the roster and
+  the economy agree; the complaint is free, not built; the mood breakdown still sums to 1.00;
+  stamps do not accumulate.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>The gap it ended on</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td>
+        <td class="n score low">0.8</td>
+        <td class="fail">SHORT</td>
+        <td>
+          <b>The talk panel told two stories about the same person, in one panel, 30 lines
+          apart.</b> node-city's <code>ctHtml()</code> emits
+          <code>MythicCitizen.dossierHtml(c.id)</code> at <code>index.html:39486</code> and
+          then the new mood breakdown at <code>:39488-39496</code>. The dossier's Age row
+          came from <code>citizen/facts.js:345-349</code> and still read, verbatim: "<em>no
+          named citizen ever dies, retires off the roster or leaves, so they all age together
+          on one clock</em>" — directly above the panel's new fifth term "Somewhere to be
+          buried" and the new death sentence at <code>:39377-39386</code>. The same false
+          clause sat in <code>lifepath/model.js:834</code>, appended to that identical row as
+          the live <code>drift</code> sentence, while <code>model.js:461-465</code> and
+          <code>:768</code> still logged the ageing-out rejection as an <em>open</em> item —
+          and that note was the very licence this piece was built under. The piece built the
+          verb the note asked for (<code>CITIZENS_API.retire</code>,
+          <code>index.html:38618-38670</code>) and never went back to close the note or the
+          two player-facing sentences it feeds. Neither file appeared in the diff.
+        </td>
+      </tr>
+      <tr>
+        <td class="n">2</td>
+        <td class="n score up">4.4</td>
+        <td class="pass">PASS</td>
+        <td>
+          <span class="closed">✔ <b>Closed by conditioning the sentence instead of deleting
+          it.</b> Verified in the tree just now: <code>citizen/facts.js:335</code> records
+          that the line "used to state as a FLAT FACT" what is now only true when deathcare
+          is absent; <code>:362</code> and <code>:381</code> carry the conditional branch, so
+          the words survive only for a city with no mortality model.
+          <code>lifepath/model.js:772</code>, <code>:816</code>, <code>:918</code> and
+          <code>:930</code> got the same treatment, and the rejection note that licensed the
+          work was closed with it.</span>
+          Both files are in the diff now. The dossier and the mood breakdown tell one story.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>feed subject <b>death + deathcare dept</b></span>
+    <span>flow.died = roster removals + terminal stage <b>within rounding</b></span>
+    <span>new alert/toast paths <b>0</b></span>
+    <span>ctTerms() weights sum <b>1.00</b></span>
+    <span>talk-panel disagreement <b>&lt; 0.1</b></span>
+    <span>cemetery buildMesh bbox <b>non-zero</b></span>
+    <span>progression slot collision <b>none</b></span>
+    <span>lifepath stamp table <b>shrinks with roster</b></span>
+  </div>
+  <div class="next">
+    <b class="h">What a person still has to judge</b>
+    Tone. A named citizen you have watched for an hour now dies, and the feed says so. Whether
+    that lands as texture or as a gut-punch is not a thing a harness can measure.
+  </div>
+</div>
+
+<!-- ─── PIECE 5 ─────────────────────────────────────────────────────── -->
+<div class="piece short">
+  <h3>5 · The zombie risk — a forecast you can act on, not a coin flip <span class="fail">— STILL SHORT</span></h3>
+  <p class="meta">3 rounds · 5 → 72 → 78 · <span class="v no">DID NOT MEET THE BAR</span> ·
+     public/src/zombie (4 files, 1,582 lines, new)</p>
+  <p class="bar"><b>The bar:</b> the player saw it coming, knew what caused it, knew what
+  would stop it, and could afford to. Ten criteria, of which the load-bearing three are:
+  <b>(1)</b> the forecast is real and the first outbreak lands inside the stated window;
+  <b>(2)</b> no surprise — no path where an outbreak fires before the warning has been on
+  screen a full wave interval; <b>(3)</b> prevention is monotone <em>and the panel names the
+  delta</em>.</p>
+
+  <table>
+    <thead><tr><th>Round</th><th>Score</th><th>Verdict</th><th>The gap it ended on</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">1</td>
+        <td class="n score low">5</td>
+        <td class="fail">SHORT</td>
+        <td>
+          <b>The warning was never on screen.</b> <code>#zcard</code> was declared inside
+          <code>#rightcol</code> (<code>index.html:897</code>), and the rail-dock refactor
+          makes that column a <code>display:none</code> stash whose cards are reachable
+          <em>only</em> by being registered in <code>RAILS</code> — and <code>zcard</code> was
+          not among the 14 entries. No launcher, no <code>railState</code> branch, no badge,
+          so <code>railOpen</code> could never move it into <code>#rmbody</code>.
+          <b>Measured live at risk 91.5/100</b> with <code>permit()</code> open
+          (<code>{ok:true, stood:2713}</code>) and the next roll 9:52 away at 39.8%:
+          <code>#zcard</code> was <b>0×0</b> in the closed state and in all 15 launcher
+          states, <code>offsetParent=null</code>, and no visible element on the page contained
+          "outbreak", "unburied" or 🧟.
+          <b>CONTROL, same run, same instrument:</b> ⚔ Raid rendered <code>#raidcard</code> at
+          <b>528×126</b> and 📉 Vitals rendered <code>#vitalscard</code> at <b>528×646</b> —
+          so the zero was the card, not the measurement. The dwell gate was airtight in
+          simulated time and the card string was correct; the string was painted into a node
+          out of layout and out of paint, so 1800s of guaranteed notice was worth exactly zero
+          pixels.
+        </td>
+      </tr>
+      <tr>
+        <td class="n">2</td>
+        <td class="n score mid">72</td>
+        <td class="fail">SHORT</td>
+        <td>
+          <span class="closed">✔ <b>Round 1 closed.</b> Verified in the tree just now:
+          <code>index.html:43592</code> carries the 15th RAILS row —
+          <code>{ id:'zcard', ico:'🧟', name:'Outbreak', title:'Outbreak Risk', clock:true }</code>
+          — with a <code>railState</code> branch at <code>:43741</code> reading the rendered
+          card's own class, and <code>:43559</code> records why the row exists.</span>
+          <b>New gap: the forecast modelled burial RATE but not burial GROUND.</b>
+          <code>risk.js:356</code> projected <code>interred = min(unburied, capPerDay × days)</code>
+          — two terms — while the code that actually buries people,
+          <code>mortality/model.js:136</code>, is
+          <code>min(waiting, capMin × dt, room)</code> — three. <code>risk.js:316</code>
+          quoted mortality's three-term line in its own monotonicity proof and then omitted
+          <code>room</code>; <code>zombie/index.js:155</code> read <code>plotsFree</code> off
+          the sibling and <code>inputs()</code> never passed it on.
+          <b>Demonstrated headless against the shipped module:</b> one Graveyard at 21/24
+          plots, deaths 4/day vs burial 5/day — the card printed "<em>No outbreak in the next
+          60 city days (20h real) at this rate</em>" (<code>firstIn=null</code>) and the first
+          outbreak landed at <b>t = 14,400s = 12.0 city days</b>. That is criterion 1's stated
+          disqualifier. Not an edge case: <code>index.html:3585</code> designs for it in
+          writing — "COVERAGE is what bites in a session … PLOTS are what bite over the life
+          of a save" — and the divergence band is every state where
+          <code>0 &lt; plotsFree &lt; rate × horizon</code>, i.e. the back half of a
+          graveyard's life.
+        </td>
+      </tr>
+      <tr>
+        <td class="n">3</td>
+        <td class="n score mid">78</td>
+        <td class="fail">STILL SHORT</td>
+        <td>
+          <span class="closed">✔ <b>Round 2 closed.</b> Verified in the tree just now:
+          <code>zombie/index.js</code> puts <code>base.room = M.plotsFree</code> on
+          <code>inputs()</code> with a comment naming the exact lie it fixes, and
+          <code>risk.js:432</code> is now
+          <code>interred = Math.min(S.unburied, capPerDay * days, room)</code> — three terms.
+          <code>roomOf()</code> at <code>:186</code> defaults to <code>Infinity</code>, not
+          zero, so a host that cannot report plots is not silently told it has none
+          (<code>:68</code>).</span>
+          <span class="still">✖ OPEN — criterion 3's second clause: <b>the panel does not name
+          the delta when the player acts.</b></span>
+          <code>zombie/index.js:254</code> sets <code>lastDelta</code> from a single
+          1-second beat's easing derivative
+          (<code>dRisk = gap × (1 − e^(−1/600)) ≈ 0.0017 × gap</code>), and
+          <code>panel.js:110</code> renders an arrow only above <code>0.05</code> — so a
+          capacity increase can never produce a visible one.
+          <b>Forked one backlogged city</b> (27 unburied, deaths 12/day, burial 4/day, risk
+          72.093, "OUTBREAK LIKELY") and varied only the new capacity: at <b>8/day</b> and at
+          <b>12/day</b> — the latter exact break-even with the death rate — the rounded meter
+          <em>never falls</em> and no arrow <em>ever appears</em> in 3,000s of simulated time,
+          while risk climbs to 74.96 / 74.47. Only a <b>6× increase (24/day)</b> moves the
+          rounded meter, after 872s, with the first arrow at 2,600s. Next-tick risk is
+          strictly lower (1.17e-3 at cap 1200 vs cap 4) so the monotonicity half holds — but
+          1.17e-3 is invisible on an integer meter. <code>panel.js:21-23</code> promises
+          precisely what is absent — "<em>risk 62, down 4 since you opened the second
+          morgue</em>" — and no baseline is kept anywhere from which that sentence could be
+          written.
+          <b>Same family, second instance:</b> the photographed card printed "3 burial grounds
+          0/day · 270/270 plots free — enough for the whole forecast" beside <b>2,155
+          unburied</b> and OUTBREAK LIKELY, because <code>stalled</code>
+          (<code>panel.js:140</code>) only fires on ground-out
+          (<code>eff &lt; capPerDay</code>) and never when the <em>rate itself</em> is zero —
+          which is the state an outbreak strike on a graveyard creates.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ev">
+    <span>RAILS row present <b>yes (15th)</b></span>
+    <span>forecast third term `room` <b>yes</b></span>
+    <span>roll seeded &amp; probability shown pre-resolve <b>yes</b></span>
+    <span>damage funnel <b>1 (damageTile)</b></span>
+    <span>counter-building <b>1 WX_SHIELD row</b></span>
+    <span>logEvent → /src/broadcast, new UI <b>0</b></span>
+    <span>agents spawned <b>0 (deferral stated)</b></span>
+    <span class="no">panel names the delta <b>NO</b></span>
+    <span class="no">rate-zero callout <b>NO</b></span>
+    <span class="no">risk baseline latched <b>NO</b></span>
+  </div>
+
+  <div class="next red">
+    <b class="h">The fix that was not made, and where it goes</b>
+    Both halves stay inside the existing seam and neither is large. <b>(a)</b> Latch a risk
+    baseline whenever <code>capPerDay</code> or <code>room</code> changes and render the
+    difference against <em>that</em> — "since you built X" — instead of against the previous
+    one-second beat; the arrow threshold at <code>panel.js:110</code> then has something with
+    magnitude to test. <b>(b)</b> Add a rate-zero callout beside the existing ground-out one
+    at <code>panel.js:140</code>, so "0/day" can never appear next to "enough for the whole
+    forecast". Until (a) exists, a player who correctly diagnoses the problem and correctly
+    spends the money gets no confirmation that they were right — which is the whole bar,
+    not a polish item.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>The three gates — re-run for this page</h2>
+
+<p class="gatehdr">Run from the repo root, just now, against the working tree exactly as
+described above. Real output, unedited except where marked <span class="dimx">[…]</span>.</p>
+
+<pre><span class="cmd">$ export PATH="$PATH:/c/Program Files/nodejs"</span>
+<span class="cmd">$ node _synckcheck.mjs</span>
+
+=== public/index.html ===
+script #1: OK (30476 chars)
+script #2: OK (12302317 chars)
+script #3: skipped (importmap)
+script #4: OK (1255 chars, module)
+
+<span class="good">ALL CLEAN</span>
+exit 0</pre>
+
+<pre><span class="cmd">$ node .gauntlet/modcheck.mjs</span>
+
+<span class="good">ALL 226 MODULES PARSE  (public/src)</span>
+exit 0</pre>
+
+<pre><span class="cmd">$ node tools/mp-tests/run.mjs</span>
+
+══ MULTIPLAYER GATE ══  13 test file(s): perspective.mjs, private-zones.mjs, citytrade.mjs,
+   trade-modal.mjs, move-merge.mjs, node-daycap.mjs, builtins.mjs, warpath-gate.mjs,
+   storage.mjs, overlays.mjs, heroart.mjs, wxshield.mjs, zones.mjs
+
+🪞 PERSPECTIVE PARITY — 26 side/position fields scanned across one swap
+  ✅ every side flipped and every coordinate mirrored.
+
+🔒 PRIVATE-ZONE REMOVALS — 21 properties
+  ✅ removals land, replays are inert, and nothing unnamed is ever touched.
+
+🤝 CITY TRADE PLANNING — 30 properties
+  ✅ cycles derive from the clock, and short never part-delivers.
+
+🤝 TRADE DIALOG MARKUP — 22 checks
+<span class="dimx">[…]</span>
+── built-in mockup cards ──          12 passed, 0 failed
+── warpath admin gate ──            13 passed, 0 failed
+── storage capacity ──              14 passed, 0 failed
+── overlay stacking ──              23 passed, 0 failed
+── hero art ──                      30 passed, 0 failed
+── shield cover by count ──         17 passed, 0 failed
+── residential grades / research ↔ zones ──   18 passed, 0 failed
+
+── falsifiability: reverting each fix in a temp copy, expecting RED ──
+  ✅ proven       "sealedTiles / smokedTiles / delayedBlasts stop mirroring" → 3 finding(s)
+  ✅ proven       "delayedBlasts owner stops swapping" → 1 finding(s)
+  ✅ proven       "the counter-card pair stops exchanging" → 1 finding(s)
+  ✅ proven       "private-zone removals stop being applied (liveness)" → 6 finding(s)
+  ✅ proven       "the op ledger stops deduping (a resync would remove a second card)" → 1 finding(s)
+  ✅ proven       "a cross-side write loses its removal op (millEnemy)" → 2 finding(s)
+  ✅ proven       "planDraw part-delivers instead of refusing" → 5 finding(s)
+  ✅ proven       "cycle count stops being a function of the clock" → 6 finding(s)
+  ✅ proven       "the moveset merge goes back to picking by length" → 3 finding(s)
+  ✅ proven       "hero art stops consulting getCardArt" → 4 finding(s)
+  ✅ proven       "two research nodes collide on one grid slot" → 1 finding(s)
+  ✅ proven       "fire rain stops respecting fire cover" → 1 finding(s)
+  ✅ proven       "a damaged protector still protects" → 1 finding(s)
+  ✅ proven       "the warpath gate goes back to emoji glyphs" → 1 finding(s)
+  ✅ proven       "the image-extension regex loses its escape" → 2 finding(s)
+  ✅ proven       "a city pill goes back to a hardcoded right offset" → 2 finding(s)
+  ✅ proven       "the JB iframe covers the sub-apps it opens" → 2 finding(s)
+  ✅ proven       "the JB iframe URL loses its cache-buster" → 1 finding(s)
+  ✅ proven       "a duplicated warehouse op is counted twice" → 1 finding(s)
+  ✅ proven       "negative workers subtract from capacity" → 1 finding(s)
+  ✅ proven       "the warpath kill switch stops disabling the mode" → 2 finding(s)
+  ✅ proven       "a locked hub tile becomes clickable again" → 1 finding(s)
+  ✅ proven       "the admin grant stops honouring the built-in flag" → 1 finding(s)
+  ✅ proven       "the camp Table stops skipping built-in ids" → 1 finding(s)
+  ✅ proven       "an absent tier means a ZERO daily cap instead of none" → 2 finding(s)
+
+<span class="good">✅ MP GATE PASSED — and every check was shown to fail when its fix is removed.</span>
+exit 0</pre>
+
+<div class="note">
+  <b>What the gates do not cover.</b> All three are structural. <code>_synckcheck.mjs</code>
+  proves index.html parses; <code>modcheck.mjs</code> proves every module parses (which matters
+  because a module that fails to parse reports at runtime as "not mounted (non-fatal)" —
+  indistinguishable from absent); <code>run.mjs</code> proves 13 multiplayer/city invariants
+  and then proves each one goes red when its fix is reverted. <b>None of them can tell you the
+  outbreak is unfinished.</b> Green gates are the floor, not the verdict — the verdict is the
+  red block at the top of this page.
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<h2>Scale of the change, and what state it is in</h2>
+
+<table>
+  <thead><tr><th>Item</th><th>Value</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>Tracked files changed</td><td class="n">26</td><td>+2,670 / −183</td></tr>
+    <tr><td><code>public/node-city/index.html</code></td><td class="n">+1,436 / −76</td>
+        <td>host wiring only — bridge fields, one tick hook, one RAILS row, the retired-Lane comment block</td></tr>
+    <tr><td>New modules</td><td class="n">4</td>
+        <td><code>/src/mortality</code> (703 lines) · <code>/src/resmap</code> (1,868) ·
+            <code>/src/zombie</code> (1,582) · <code>/src/water/drain.js</code> (588)</td></tr>
+    <tr><td>Modules parsing</td><td class="n">226 / 226</td><td>was 213 before this run</td></tr>
+    <tr><td>Commits</td><td class="n fail">0</td><td>working tree only</td></tr>
+    <tr><td>Deploys / version bumps</td><td class="n fail">0</td>
+        <td><code>version.txt</code>, <code>BUILD_VERSION</code>, <code>CACHE_VERSION</code> all untouched</td></tr>
+    <tr><td>Migrations written or run</td><td class="n fail">0</td>
+        <td>no new table, so no RLS was owed</td></tr>
+    <tr><td>Human play sessions</td><td class="n fail">0</td><td>this is the number that matters</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <p>Generated from the round record on branch <code>city-construction-timers</code>. The
+  round scores, gap texts and the measurements quoted inside them are transcribed from the
+  rounds themselves; every <code>file:line</code> claim about the <em>current</em> state of
+  the tree was re-checked against the working copy while writing this page, and the three
+  gate outputs were re-run for it.</p>
+  <p>Pixel A/B deltas and their controls are reported as recorded and were <b>not</b>
+  reproduced here — re-running them needs a driven browser with
+  <code>renderer.render()</code> called between the two reads and the
+  <code>drawImage</code> in the same task, or the answer is a confident, wrong zero.</p>
+  <p>Nothing on this page has been committed, deployed, or played.</p>
+</footer>
+
+</div>

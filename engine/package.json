@@ -1,0 +1,10 @@
+{
+  "name": "@mythic/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared battle engine — the ONE source of truth the browser client and the Colyseus server both run. Pure, synchronous, data-driven. See ../docs/mp-server-authority-shared-engine.md.",
+  "exports": {
+    "./catalogs": "./catalogs.gen.js"
+  }
+}

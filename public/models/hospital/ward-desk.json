@@ -1,0 +1,25 @@
+{
+  "file": "ward-desk.glb",
+  "bytes": 1959500,
+  "triangles": 36108,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.952,
+      -0.698,
+      -0.543
+    ],
+    "max": [
+      0.951,
+      0.698,
+      0.543
+    ]
+  },
+  "dims": {
+    "w": 1.903,
+    "h": 1.396,
+    "d": 1.086
+  },
+  "source": "assets-source/glb-masters/hospital/ward-desk.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

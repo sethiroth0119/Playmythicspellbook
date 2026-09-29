@@ -1,0 +1,3 @@
+/* D3 — D2 + chips allowed to be wide enough for a 63-char label in 2 lines */
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { width: 28px !important; height: 28px !important; }
+.fx-two label:has(> input[type="checkbox"]), .fx-two label:has(> input[type="radio"]) { padding: 4px 9px; flex: 1 1 24rem; max-width: 26rem; }

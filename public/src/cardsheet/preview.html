@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<base href="/">
+<title>Tabletop Sheet — preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="/src/cardsheet/sheet.css">
+<style>
+  /* ⚠ PREVIEW CHROME ONLY — nothing in this block ships. It exists so the owner
+     can flip between the three cases the sheet has to survive without me
+     screenshotting three separate pages. */
+  html,body{margin:0;height:100%;background:#05070f;font-family:system-ui,sans-serif}
+  #pick{position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;gap:8px;
+    padding:8px 12px;background:rgba(0,0,0,.75);border-bottom:1px solid #223}
+  #pick button{padding:6px 14px;background:#12243c;color:#9fd4ff;border:1px solid #2e5c88;
+    cursor:pointer;font:600 12px system-ui}
+  #pick button[aria-pressed=true]{background:#2e5c88;color:#fff}
+  .tts-backdrop{padding-top:52px;padding-bottom:10px}
+</style>
+</head>
+<body>
+<div id="pick"></div>
+<div id="out"></div>
+
+<script type="module">
+import { renderSheet } from '/src/cardsheet/index.js';
+
+const A = 'assets/artwork/';
+const HERALD = A + 'gameicons/announcer-bot.webp';
+const EL = (n) => `<img src="${A}gameicons/Elements/${n}.png" alt="">`;
+/* index.html's elementDot() renders the little coloured pip beside a move name.
+   Stand-in of the same size so the row spacing is honest. */
+const DOT = (c) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 6px ${c};margin-right:5px;vertical-align:middle"></span>`;
+const statIcon = (k, sz) => {
+  const F = {hp:'Health',atk:'Attack',def:'Defense',mag:'Magic',res:'Resistance',spd:'Speed'}[k];
+  return F ? `<img src="${A}gameicons/Stats/${F}.png" alt="" style="height:${sz};width:${sz}">` : '';
+};
+
+/* The city-work panel and the counter/in-grave blocks arrive from index.html as
+   ready HTML. These fixtures are hand-written stand-ins of the same SHAPE, so
+   the preview shows how foreign markup sits inside the read window. */
+const WORK = `<div class="tts-box">
+  <div class="nm">🛠 Work Suitability <span style="float:right;font-size:10px;letter-spacing:.1em;color:#8fa6c4">Node City · Lv 2</span></div>
+  <div class="bd" style="display:flex;flex-direction:column;gap:4px;margin-top:6px">
+    <div style="display:flex;align-items:center;gap:8px">🔨 Handiwork
+      <span style="margin-left:auto;display:flex;gap:2px">
+        <i style="width:9px;height:9px;background:#ffd166;display:block"></i>
+        <i style="width:9px;height:9px;background:#ffd166;display:block"></i>
+        <i style="width:9px;height:9px;background:#33404f;display:block"></i></span></div>
+    <div style="display:flex;align-items:center;gap:8px">🌱 Planting
+      <span style="margin-left:auto;display:flex;gap:2px">
+        <i style="width:9px;height:9px;background:#ffd166;display:block"></i>
+        <i style="width:9px;height:9px;background:#33404f;display:block"></i>
+        <i style="width:9px;height:9px;background:#33404f;display:block"></i></span></div>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <span style="padding:1px 8px;border:1px solid #6a5a2a;color:#ffd166;font-size:10.5px">🍖 Glutton</span>
+      <span style="padding:1px 8px;border:1px solid #6a5a2a;color:#ffd166;font-size:10.5px">⏱ Clumsy</span>
+    </div>
+  </div></div>`;
+
+const FIX = {
+  unit: {
+    heraldUrl: HERALD,
+    title: 'Unit · Level 2',
+    name: 'Azen, Warrior of the Darkside',
+    cost: 1, costLabel: 'Cost',
+    bond: { icon: '❤', label: 'Sworn' },
+    artUrl: A + 'Azen Magical Warrior of The Darkside..png',
+    elements: [{ name: 'Water', iconHtml: EL('Water') }, { name: 'Shadow', iconHtml: EL('Shadow') }],
+    faction: { name: 'Abra', iconHtml: '' },
+    flavor: 'Nothing can break the shield of this knight. The Defender of the realms, keeping the human race protected from unworldly anomalies.',
+    passives: [
+      { name: 'Catalyst (Lesser)', desc: 'Holds Primordial Energy — can initiate an Archon Summon, summoning Lesser Archons.' },
+      { name: 'Mirrorskin', desc: 'Reflects 30% of any magic damage it takes back at the caster.' },
+    ],
+    blocks: [{ html: WORK }],
+    note: 'Place adjacent to your hero (within 1 tile).',
+    stats: { hp: 60, atk: 5, def: 30, mag: 22, res: 18, spd: 1 },
+    statIcon,
+    actions: [
+      { id: 'p-close', label: 'Close' },
+      { id: 'p-play', label: '↗ Play this card', kind: 'go' },
+    ],
+  },
+
+  spell: {
+    heraldUrl: HERALD,
+    title: 'Spell',
+    name: 'Tide of the First Abyss',
+    cost: 4, costLabel: 'Cost',
+    artUrl: A + 'Abyssion The first Tide.png',
+    elements: [{ name: 'Water', iconHtml: EL('Water') }],
+    flavor: 'The first tide never receded. It only learned patience.',
+    blocks: [
+      { title: '⚡ On Play', html: '<div class="tts-box cool"><div class="bd">Deal 25 magic damage to every enemy unit within 2 tiles of your hero. Units hit lose 1 SPD until the end of their next turn.</div></div>' },
+      { title: '⚰ In Grave', html: '<div class="tts-box cool"><div class="bd">While this sits in your graveyard, your Water units cost ⚡1 less (once per turn).</div></div>' },
+    ],
+    note: 'Cannot play right now — need 4 ⚡',
+    noteWarn: true,
+    actions: [
+      { id: 'p-close', label: 'Close' },
+      { id: 'p-cast', label: '✦ Cast', kind: 'cast', disabled: true },
+    ],
+  },
+
+  field: {
+    heraldUrl: HERALD,
+    title: 'Unit · Level 4 · On Field',
+    name: 'Bahamut, King of Good Dragons',
+    cost: 8, costLabel: 'Cost', costFree: true, costOriginal: 8,
+    bond: { icon: '❤', label: 'Trusting' },
+    artUrl: A + 'Bahamut King Of Good Dragons.png',
+    elements: [{ name: 'Light', iconHtml: EL('Light') }, { name: 'Fire', iconHtml: EL('Fire') }],
+    faction: { name: 'Bahamut', iconHtml: '' },
+    flavor: 'The sky bends so that he may pass through it.',
+    passives: [{ name: 'Sovereign', desc: 'Adjacent allied units cannot be targeted by enemy spells.' }],
+    blocks: [{ title: '⚔️ When Attacking', html: '<div class="tts-box cool"><div class="bd">Burn the defender for 10 before damage resolves.</div></div>' }],
+    note: '🆘 Underdog — this card costs ⚡0 while you are outnumbered.',
+    stats: { hp: 210, atk: 74, def: 52, mag: 68, res: 40, spd: 2 },
+    currentHp: 96, maxHp: 210,
+    statIcon,
+    /* The four rows from the owner's screenshot of the live Moves & Attacks
+       block, so the new panel can be compared against the old one directly. */
+    moves: [
+      { id: 'quickjab', name: 'Quick Jab', dotHtml: DOT('#5fd47a'), cost: 0, range: 1, kind: 'attack',
+        meta: 'Pwr 14 · 12% Crit', desc: 'Swift basic attack (free)', selected: true },
+      { id: 'heavy', name: 'Heavy Strike', dotHtml: DOT('#ff6b5e'), cost: 1, range: 1, kind: 'attack',
+        meta: 'Pwr 42 · 90% Acc', desc: 'Devastating blow' },
+      { id: 'smash', name: 'Smash', dotHtml: DOT('#ff6b5e'), cost: 2, range: 1, kind: 'attack',
+        meta: 'Pwr 56 · 85% Acc', desc: 'Massive blow' },
+      { id: 'prep', name: 'Battle Prep', dotHtml: DOT('#ffd45e'), cost: 1, costWas: 2, range: 0, kind: 'ability',
+        meta: '+4 ATK 2t', desc: 'Braces for the exchange' },
+      { id: 'roar', name: 'Sovereign Roar', dotHtml: DOT('#c07bff'), cost: 4, range: 3, kind: 'attack',
+        priority: true, meta: 'Pwr 70 · 80% Acc', desc: 'Needs 4 ⚡ — you have 0', disabled: true,
+        title: 'Not enough energy' },
+    ],
+    actions: [{ id: 'p-close', label: 'Close' }],
+  },
+};
+
+const out = document.getElementById('out');
+const pick = document.getElementById('pick');
+let cur = 'unit';
+function draw() {
+  out.innerHTML = renderSheet(FIX[cur]);
+  [...pick.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.k === cur)));
+}
+Object.keys(FIX).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = k; b.dataset.k = k;
+  b.onclick = () => { cur = k; draw(); };
+  pick.appendChild(b);
+});
+draw();
+window.__ttsPick = (k) => { cur = k; draw(); };
+</script>
+</body>
+</html>

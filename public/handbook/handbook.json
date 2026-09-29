@@ -1,0 +1,835 @@
+{
+  "schema": 2,
+  "title": "Mythic Spellbook",
+  "subtitle": "Core Rulebook",
+  "edition": "First Edition",
+  "version": "v121",
+  "cover": {
+    "image": "assets/handbook/cover.png",
+    "fallback": "assets/Locations/First Galaxy.png",
+    "eyebrow": "HIDN STUDIOS PRESENTS",
+    "title": "MYTHIC SPELLBOOK",
+    "subtitle": "Core Rulebook",
+    "tagline": "The complete rules of play — the battlefield, the battle round, and everything that happens on it.",
+    "byline": "First Edition"
+  },
+  "colophon": "This rulebook describes the live rules of Mythic Spellbook. The element, faction, status and rarity tables are generated from the game's own data. Where this book and the game disagree, the game is right and this book is out of date — please tell us.",
+  "preamble": {
+    "h": "How to use this book",
+    "body": "<p>This book is in four parts. <strong>Part One</strong> is the Core Rules — everything that happens during a battle, numbered so it can be cited. <strong>Part Two</strong> is the reference tables you will look things up in. <strong>Part Three</strong> covers building a deck and a roster. <strong>Part Four</strong> is everything outside the battlefield. The <strong>Appendix</strong> holds a one-page summary and a glossary.</p><p>Words printed as <dfn>defined terms</dfn> have exact meanings. They are defined where they first appear and collected in the Glossary.</p>",
+    "rules": [
+      {
+        "h": "The card wins",
+        "body": "Where a card's text contradicts these core rules, <strong>the card is correct</strong>. Cards are written to break rules; that is what makes them worth playing."
+      },
+      {
+        "h": "The specific beats the general",
+        "body": "Where two rules both apply, the more specific one is used. A rule about Fire units overrides a rule about all units."
+      },
+      {
+        "h": "Cannot beats can",
+        "body": "Where one effect says something <em>can</em> happen and another says it <em>cannot</em>, it cannot."
+      },
+      {
+        "h": "The game is the referee",
+        "body": "This is a video game, not a tabletop argument. Where this book is unclear, the game's behaviour is the answer — and the book is the thing that needs fixing."
+      }
+    ]
+  },
+  "chapters": [
+    {
+      "id": "battlefield",
+      "part": "Part One · The Core Rules",
+      "num": "1",
+      "title": "The Battlefield",
+      "blurb": "The grid, the two heroes, and how a battle is won.",
+      "art": "assets/Gameboard/Gameboard structure 1.png",
+      "sections": [
+        {
+          "n": "1.1",
+          "h": "The Grid",
+          "body": "<p>A battle is fought on a grid <strong>14 columns wide and 12 rows deep</strong>. Each square is a <dfn>tile</dfn>. A tile holds at most one <dfn>unit</dfn>.</p>\n<p>Your half is the <strong>south</strong> edge of the grid; your opponent's is the <strong>north</strong>. Distance across the grid is real and always counts: a unit cannot act on something it cannot reach.</p>"
+        },
+        {
+          "n": "1.2",
+          "h": "Heroes",
+          "body": "<p>Each player has one <dfn>hero</dfn> on the battlefield. Your hero carries a gold outline; the enemy hero carries a red one. A hero is a unit in every respect — it occupies a tile, it has the six characteristics in <strong>1.3</strong>, it moves and it attacks — with one addition: <strong>if a hero is reduced to 0 wounds, its controller loses the battle.</strong></p>",
+          "note": "Your hero is a target from the first battle round, not a health bar in the corner. A fast enemy unit that slips past your line and starts chipping at it is not a nuisance to deal with later."
+        },
+        {
+          "n": "1.3",
+          "h": "Characteristics",
+          "body": "<p>Every unit and hero has the same six <dfn>characteristics</dfn>.</p>",
+          "profile": {
+            "name": "UNIT PROFILE",
+            "line": [
+              {
+                "k": "HP",
+                "v": "Wounds. At 0 the unit is destroyed."
+              },
+              {
+                "k": "ATK",
+                "v": "Physical attack. Checked against the target's DEF."
+              },
+              {
+                "k": "DEF",
+                "v": "Physical defence. Reduces incoming ATK damage."
+              },
+              {
+                "k": "MAG",
+                "v": "Magical attack. Checked against the target's RES."
+              },
+              {
+                "k": "RES",
+                "v": "Magical resistance. Reduces incoming MAG damage."
+              },
+              {
+                "k": "SPD",
+                "v": "Speed. Governs move distance, attack range and accuracy."
+              }
+            ],
+            "keywords": [
+              "ELEMENT",
+              "FACTION",
+              "ENERGY COST",
+              "RARITY"
+            ]
+          },
+          "designer": "DEF and RES are two separate walls, and almost no unit has both. A model armoured against swords is usually naked against spells. Reading only one of the two numbers is the most common way a favourable attack turns out not to be one."
+        },
+        {
+          "n": "1.4",
+          "h": "Victory",
+          "body": "<p>A battle ends the moment either hero is reduced to 0 HP. The player whose hero still stands is the winner. There is no other victory condition.</p>\n<p>Destroying every enemy unit does not win the battle. It is a means — usually the right one — but the battle is not over until something of yours reaches the enemy hero and finishes the job.</p>"
+        },
+        {
+          "n": "1.5",
+          "h": "Event Tiles",
+          "body": "<p>During a battle, <dfn>event tiles</dfn> may appear on the grid, marked with a sparkle. A player claims an event tile by moving their <strong>hero</strong> onto it, gaining items, Cinder or, rarely, a card.</p>",
+          "note": "Read what that costs you. To claim one, your hero must leave a defended position and walk into the open. That trade is the entire design of event tiles."
+        }
+      ]
+    },
+    {
+      "id": "battle-round",
+      "part": "Part One · The Core Rules",
+      "num": "2",
+      "title": "The Battle Round",
+      "blurb": "The sequence every turn follows, in order.",
+      "art": "assets/artwork/Sparta Commander Paul.png",
+      "sections": [
+        {
+          "n": "2.1",
+          "h": "The Sequence",
+          "body": "<p>Players alternate turns. A player's turn resolves in three steps, always in this order. A turn cannot be taken out of sequence and a step cannot be skipped.</p>",
+          "seq": [
+            {
+              "h": "Start of Turn",
+              "body": "Maximum energy rises by 1 (see <strong>2.2</strong>) and the energy pool refills. Damage-over-time status effects resolve (see <strong>6.2</strong>). Kalon seals count down (see <strong>7.4</strong>)."
+            },
+            {
+              "h": "Action Step",
+              "body": "In any order and any number of times, so long as they can be paid for: play cards from hand (see <strong>3</strong>), and move and act with units on the battlefield (see <strong>4</strong> and <strong>5</strong>)."
+            },
+            {
+              "h": "End of Turn",
+              "body": "The active player declares the turn over. The opponent then takes their own turn from the top of this sequence."
+            }
+          ],
+          "note": "There is no draw step you control and no combat phase you declare. You act, and the board resolves as you go."
+        },
+        {
+          "n": "2.2",
+          "h": "Energy",
+          "body": "<p><dfn>Energy</dfn> is the resource that pays for everything. A player begins the battle with <strong>1</strong> maximum energy. At the start of each of their turns, their maximum rises by <strong>1</strong>, to a ceiling of <strong>10</strong>, and their pool refills to that maximum.</p>\n<p><strong>Energy does not carry over.</strong> Any energy unspent at the end of a turn is lost.</p>",
+          "table": {
+            "head": [
+              "Turn",
+              "1",
+              "2",
+              "3",
+              "4",
+              "5",
+              "6",
+              "7",
+              "8",
+              "9",
+              "10+"
+            ],
+            "rows": [
+              [
+                "Energy",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                "10"
+              ]
+            ]
+          },
+          "designer": "This single line gives the game its shape: lean early, explosive late. A deck that ignores it — all expensive cards, nothing cheap — spends its first four turns doing nothing and has lost before its good cards arrive."
+        },
+        {
+          "n": "2.3",
+          "h": "The Opening Hand",
+          "body": "<p>Each player begins the battle with <strong>5 cards</strong> drawn from their 40-card deck, and draws further cards as the battle proceeds.</p>",
+          "example": "Your deck is 40 cards and your opening hand is 5. The card you built the deck around is, on the overwhelming balance of probability, not in it. Build so that a hand of ordinary cheap cards is still a hand you can win from."
+        },
+        {
+          "n": "2.4",
+          "h": "Running Out of Cards",
+          "body": "<p>A deck is finite. A player whose deck is empty when they would draw instead suffers <dfn>fatigue</dfn> damage, and continues to do so each time they would draw thereafter.</p>\n<p>Few battles reach this point. A deck built to stall forever should know the clock exists and is pointed at both players.</p>"
+        }
+      ]
+    },
+    {
+      "id": "cards",
+      "part": "Part One · The Core Rules",
+      "num": "3",
+      "title": "Playing Cards",
+      "blurb": "The five card types and what each one does.",
+      "art": "assets/Spells/Arcane Insight.png",
+      "sections": [
+        {
+          "n": "3.1",
+          "h": "Paying for a Card",
+          "body": "<p>Every card has an <dfn>energy cost</dfn> printed in its corner. To play a card, a player spends that much energy from their pool. A card that cannot be paid for cannot be played.</p>"
+        },
+        {
+          "n": "3.2",
+          "h": "Unit Cards",
+          "body": "<p>A <dfn>unit card</dfn> summons a unit onto a tile on the battlefield. It remains there until destroyed. Units take and hold ground, and are how a player eventually reaches the enemy hero.</p>"
+        },
+        {
+          "n": "3.3",
+          "h": "Spell Cards",
+          "body": "<p>A <dfn>spell card</dfn> resolves immediately and is then discarded. Spells deal damage, restore wounds, apply or remove status effects, and remove units from the battlefield.</p>\n<p>A spell needs no walk across the grid and suffers no summoning delay. It is tempo in a can.</p>"
+        },
+        {
+          "n": "3.4",
+          "h": "Trap Cards",
+          "body": "<p>A <dfn>trap card</dfn> is set face down and does nothing until its trigger condition is met, at which point it resolves. The opposing player cannot see a set trap.</p>",
+          "designer": "A trap's real value is not the one time it fires. It is every turn afterwards that your opponent spends playing around traps you may not even have."
+        },
+        {
+          "n": "3.5",
+          "h": "Weather Cards",
+          "body": "<p>A <dfn>weather card</dfn> changes conditions across the entire battlefield. Weather is not a private benefit — <strong>it applies to both players equally.</strong> Weather that helps your Ice units helps theirs.</p>"
+        },
+        {
+          "n": "3.6",
+          "h": "Location Cards",
+          "body": "<p>A <dfn>location card</dfn> covers the battlefield with terrain — a Lava Pit, a Sacred Grove, a Holy Spring. Like weather, a location applies to both players.</p>\n<p><strong>Only one location may be in play at a time.</strong> Playing a location removes the one already there, whoever played it.</p>",
+          "note": "That last clause is a weapon. A cheap location is often the cleanest answer to an expensive one."
+        },
+        {
+          "n": "3.7",
+          "h": "Realm Cards",
+          "body": "<p>A <dfn>Realm card</dfn> is a unit that is never drawn. It lives in your deck&rsquo;s <strong>Realm Deck</strong> &mdash; up to 21 cards, and every deck has its own &mdash; and is summoned from there when its condition is met on the battlefield. There are four kinds: <strong>Fusions</strong> (a Polycreation spell fuses matching units into one), <strong>Archons</strong> (a Catalyst unit performs a ritual with its Offerings), <strong>Evo units</strong> (a Cocoon of Evolution collects enough evolution counters and becomes one) and <strong>Convergences</strong> (below).</p>\n<p>Realm cards are collected like any other card: they come from <strong>card packs and booster boxes</strong> at their own rarity, and from structure decks. You must <strong>own</strong> a Realm card to put it in your Realm Deck, and only cards in your Realm Deck can be summoned. They can never go in your main deck, but they may sit in your side deck. To build a Realm Deck, open the Deck Builder&rsquo;s <strong>Realm</strong> tab and add cards from the Collection exactly as you add them to Main or Side &mdash; the <strong>REALM</strong> filter shows them, and only Realm cards are accepted. It is saved with the deck.</p>\n<p>A Realm unit that is returned from the field goes back to the Realm Deck, never to your hand.</p>",
+          "note": "Summons are different: a summon is a token that an effect creates on the battlefield. Summons are never collected, never in a pack and never in any deck."
+        },
+        {
+          "n": "3.8",
+          "h": "Convergence",
+          "body": "<p>A <dfn>Convergence card</dfn> is a summon kept in your <strong>Realm Deck</strong>, beside your Archons and Fusions. It is never drawn. Its number &mdash; <strong>Convergence 1</strong> to <strong>Convergence 20</strong> &mdash; is the whole recipe.</p>\n<p>To Converge, use your own living units on the battlefield (never your hero): <strong>exactly one Anchor</strong> and one or more units that are not Anchors. Their <strong>printed energy costs</strong> must add up to exactly the Convergence number (a 0-cost unit counts as 0), and they must stand in <strong>one connected chain</strong> of adjacent tiles.</p>\n<p>Every material goes to your graveyard, and the Convergence unit is summoned onto the Anchor&rsquo;s tile. Like any summon it cannot act on the turn it arrives &mdash; unless the card names an element and <strong>every</strong> material stood on ley of that element, in which case it arrives ready.</p>",
+          "note": "Anchor is a trait printed on unit cards. A Convergence 7 can be an Anchor costing 2 beside units costing 3 and 2 &mdash; or any other chain that totals 7."
+        }
+      ]
+    },
+    {
+      "id": "movement",
+      "part": "Part One · The Core Rules",
+      "num": "4",
+      "title": "Movement",
+      "blurb": "What a unit may do on its controller's turn.",
+      "art": "assets/artwork/Bogar the golden dire Wolf.png",
+      "sections": [
+        {
+          "n": "4.1",
+          "h": "Move and Act",
+          "body": "<p>During its controller's Action Step, each unit may <strong>move</strong> along a path <strong>and</strong> make <strong>one</strong> attack or use <strong>one</strong> ability.</p>\n<p>Not two attacks. Not an ability and then an attack. <strong>One.</strong> A unit that has acted is done for the turn, whether or not it has moved.</p>"
+        },
+        {
+          "n": "4.2",
+          "h": "The Cost of Moving",
+          "body": "<p>Longer moves cost energy. Moving a unit is therefore in direct competition with the card you wanted to play this turn.</p>",
+          "designer": "This is the tension the whole game runs on. The unit is in the wrong place; moving it costs you the card; playing the card leaves it in the wrong place. Every turn is some version of that choice."
+        },
+        {
+          "n": "4.3",
+          "h": "Range",
+          "body": "<p>A unit's SPD governs how far it may move, how far it may attack, and its accuracy. A unit with attack range 1 must be adjacent to its target.</p>",
+          "example": "Count their movement, not yours. The question is never \"can I reach them this turn\" — it is \"what can reach me after I do this.\" A unit that moves into range and cannot attack has handed the opponent a free strike."
+        }
+      ]
+    },
+    {
+      "id": "attacks",
+      "part": "Part One · The Core Rules",
+      "num": "5",
+      "title": "Making Attacks",
+      "blurb": "The damage sequence, step by step.",
+      "art": "assets/artwork/Pyraxus Lord of the enternal flame.png",
+      "sections": [
+        {
+          "n": "5.1",
+          "h": "The Damage Sequence",
+          "body": "<p>When a unit attacks, resolve the following in order.</p>",
+          "seq": [
+            {
+              "h": "Compare characteristics",
+              "body": "The attacker's ATK is checked against the target's DEF, or its MAG against the target's RES, according to the attack used."
+            },
+            {
+              "h": "Apply the elemental matchup",
+              "body": "Multiply by <strong>×2</strong>, <strong>×0.5</strong> or <strong>×1</strong> according to the elements involved. See <strong>5.2</strong>."
+            },
+            {
+              "h": "Apply modifiers",
+              "body": "Status effects, passives, held items, the active weather and the active location adjust the result."
+            },
+            {
+              "h": "Roll accuracy",
+              "body": "The attack may miss. Several status effects make a miss far more likely, and a few guarantee one."
+            }
+          ]
+        },
+        {
+          "n": "5.2",
+          "h": "The Elemental Matchup",
+          "body": "<p>Every unit, hero and most spells carry one or more <dfn>elements</dfn>. When an attack lands, the attacker's element is compared to the target's:</p>\n<ul>\n<li><strong>×2.0 — super-effective.</strong> The attacker's element is strong against the target's.</li>\n<li><strong>×0.5 — resisted.</strong> The target's element is strong against the attacker's.</li>\n<li><strong>×1.0 — neutral.</strong> Everything else.</li>\n</ul>\n<p>A small number of pairs are <dfn>sworn opposites</dfn>: each is super-effective against the other, so both directions strike at ×2 and <strong>neither resists</strong>. Light and Shadow are the classic pair. Such fights are decided by who swings first.</p>",
+          "note": "Doubling your damage is the largest single swing available to you, and it is free. It costs nothing but attacking the correct target. Check the element before you check the stat line.",
+          "designer": "Twenty-one elements is a lot to hold in your head, and you are not expected to. Learn your own deck's two or three primary elements cold — what they beat and what beats them — and look the rest up. The full chart is in 9."
+        },
+        {
+          "n": "5.3",
+          "h": "Immunity",
+          "body": "<p>Several elements are outright immune to status effects that would otherwise cripple them. Fire cannot be Burned. Nature cannot be Poisoned. Metal has no flesh to Bleed. Storm cannot be Stunned. Ice is already cold, so Slow and Freeze do nothing.</p>",
+          "example": "A status-heavy deck can read as blank text against the wrong board. Before you build around Freeze, count how many Ice and Crystal units you expect to face."
+        }
+      ]
+    },
+    {
+      "id": "status",
+      "part": "Part One · The Core Rules",
+      "num": "6",
+      "title": "Status Effects",
+      "blurb": "How conditions are applied, how long they last, and what they do.",
+      "art": "assets/artwork/Zombie.png",
+      "sections": [
+        {
+          "n": "6.1",
+          "h": "Applying a Status",
+          "body": "<p>A <dfn>status effect</dfn> is attached to a unit by a card, an ability or a passive, and is displayed on that unit as an icon. A unit may carry several at once.</p>"
+        },
+        {
+          "n": "6.2",
+          "h": "Duration and Resolution",
+          "body": "<p>A status lasts a set number of turns unless something removes it. Damage-over-time statuses resolve at the <strong>Start of Turn</strong> step (see <strong>2.1</strong>) and tick down at the same time.</p>"
+        },
+        {
+          "n": "6.3",
+          "h": "The Four Kinds",
+          "body": "<p>Statuses fall into four broad kinds. The catalogue is in <strong>11</strong>.</p>",
+          "cards": [
+            {
+              "icon": "&#9760;&#65039;",
+              "name": "Damage over time",
+              "text": "Poison, Burn, Bleed, Siphoned. They resolve at the start of the turn. Three turns of Burn is nine damage nobody had to roll for."
+            },
+            {
+              "icon": "&#128371;&#65039;",
+              "name": "Control",
+              "text": "Stun, Freeze, Sleep, Confusion, Paralysis. They take turns away. A stunned unit is, for that turn, a card you never played."
+            },
+            {
+              "icon": "&#128200;",
+              "name": "Characteristic change",
+              "text": "Weak, Strong, Shielded, Focused, Infected. They move the numbers the damage sequence is calculated from."
+            },
+            {
+              "icon": "&#9876;&#65039;",
+              "name": "Stance and hex",
+              "text": "Protected, Countering, Ambush Guard, Rage, Corrupted, Spectral Haze. These change the <em>rules</em> for that unit, not merely its numbers."
+            }
+          ],
+          "designer": "Control is the strongest of the four and the reason immunities exist at all. A game where Stun had no counterplay would be a game about who draws Stun first."
+        }
+      ]
+    },
+    {
+      "id": "kalon",
+      "part": "Part One · The Core Rules",
+      "num": "7",
+      "title": "The Kalon",
+      "blurb": "Three transformations per battle. The game's signature act.",
+      "art": "assets/artwork/Abraxas Creator of Source Kalon Mode.png",
+      "sections": [
+        {
+          "n": "7.1",
+          "h": "Kalon Charges",
+          "body": "<p>Each player begins a battle holding <strong>3</strong> <dfn>Kalon charges</dfn>. Spending one transforms an eligible unit into its <dfn>secret form</dfn> — improved characteristics, new abilities, and sometimes a different element or faction entirely.</p>\n<p>The unit keeps its tile and its place in the line. Everything else about it changes.</p>"
+        },
+        {
+          "n": "7.2",
+          "h": "Limits",
+          "body": "<p>A player may spend <strong>at most one Kalon charge per turn</strong>, and holds at most <strong>3</strong> at any time. Effects that grant charges cannot raise a player above that ceiling.</p>"
+        },
+        {
+          "n": "7.3",
+          "h": "Eligibility",
+          "body": "<p>Only a unit with a secret form may be transformed. Cards that have one display it. A unit without one cannot be transformed at any price.</p>"
+        },
+        {
+          "n": "7.4",
+          "h": "Sealing",
+          "body": "<p>Certain cards <dfn>seal</dfn> a player's Kalon for a number of <em>their</em> turns. While sealed, no transformation may occur. The count reduces by one at that player's Start of Turn step and is announced in the battle log.</p>"
+        },
+        {
+          "n": "7.5",
+          "h": "When to Spend One",
+          "body": "<p>A Kalon charge is not spent because it is available. It is spent because it <strong>changes the result</strong>. Three moments qualify:</p>\n<ul>\n<li><strong>To break a stalemate.</strong> Two lines face each other and neither can attack profitably. A transformation makes an attack profitable.</li>\n<li><strong>To survive lethal.</strong> The secret form has more wounds. A unit about to die becomes one that lives and strikes back.</li>\n<li><strong>To flip a matchup.</strong> Some forms change element outright, turning a resisted attack into a super-effective one.</li>\n</ul>",
+          "note": "The most common mistake in the game is burning a charge on turn two because the button was glowing. Bad moments: to make a good trade slightly better, and to win a fight you were already winning."
+        }
+      ]
+    },
+    {
+      "id": "elements",
+      "part": "Part Two · Reference",
+      "num": "8",
+      "title": "The Twenty-One Elements",
+      "blurb": "The full matchup chart. The most consulted page in this book.",
+      "art": "assets/artwork/gameicons/Elements.png",
+      "sections": [
+        {
+          "h": "Reading the chart",
+          "body": "<p>Each entry lists what that element <strong>beats</strong> (it strikes those at ×2), what it is <strong>weak to</strong> (those strike it at ×2, and it strikes them at ×0.5), and any <dfn>sworn opposites</dfn> — pairs where both directions are ×2 and neither resists. See <strong>5.2</strong> for how the multiplier is applied.</p>\n<p>Generated from the game's own tables.</p>",
+          "render": "elements"
+        }
+      ]
+    },
+    {
+      "id": "factions",
+      "part": "Part Two · Reference",
+      "num": "9",
+      "title": "Factions",
+      "blurb": "The forty-two tribes, and why a deck should care.",
+      "art": "assets/artwork/gameicons/Factions.png",
+      "sections": [
+        {
+          "h": "What a faction does",
+          "body": "<p>Where an element decides <em>how hard you strike</em>, a <dfn>faction</dfn> decides <em>who you strike alongside</em>. Cards, passives and held items reward stacking them: a Dragonblood charm is a small bonus on anything and a large one on a Dragonkin; a commander who rallies Undead does nothing in a deck with one skeleton in it.</p>\n<p>A unit may carry more than one faction and counts for all of them — a Goblin King is both Goblinoid and Warrior.</p>",
+          "render": "factions"
+        }
+      ]
+    },
+    {
+      "id": "statuses",
+      "part": "Part Two · Reference",
+      "num": "10",
+      "title": "Status Effect Catalogue",
+      "blurb": "Every condition in the game.",
+      "art": "assets/artwork/Lady Ghost.png",
+      "sections": [
+        {
+          "h": "The full list",
+          "body": "<p>See <strong>6</strong> for how statuses are applied and resolved.</p>",
+          "render": "statuses"
+        }
+      ]
+    },
+    {
+      "id": "rarity",
+      "part": "Part Two · Reference",
+      "num": "11",
+      "title": "Rarity, Items &amp; Packs",
+      "blurb": "Where cards come from and what they carry.",
+      "art": "assets/artwork/Birth Of universe 1.png",
+      "sections": [
+        {
+          "h": "The six rarities",
+          "body": "",
+          "render": "rarities"
+        },
+        {
+          "h": "What rarity means",
+          "body": "<p>Rarity states how hard a card is to obtain. It does <strong>not</strong> promise the card is good in your deck. A Common that costs 1 and holds a lane is worth more to a working deck than a Mythic you cannot afford until turn nine.</p>\n<p>What rarity does track reliably is scale: higher rarities carry larger characteristic lines, more elaborate abilities, and better rewards when defeated.</p>"
+        },
+        {
+          "h": "Held items",
+          "body": "<p>A hero may carry one <dfn>held item</dfn> into battle.</p>",
+          "table": {
+            "head": [
+              "Item",
+              "Effect"
+            ],
+            "rows": [
+              [
+                "&#128170; Power Band",
+                "+5 ATK"
+              ],
+              [
+                "&#128737;&#65039; Sturdy Shield",
+                "+5 DEF"
+              ],
+              [
+                "&#128302; Arcane Orb",
+                "+5 MAG"
+              ],
+              [
+                "&#127744; Wardstone",
+                "+5 RES"
+              ],
+              [
+                "&#128102; Swift Boots",
+                "+1 SPD"
+              ],
+              [
+                "&#10084;&#65039; Vital Charm",
+                "+10 max HP"
+              ],
+              [
+                "&#127827; Healing Berry",
+                "Restore 15 HP once per battle when below 30% HP"
+              ],
+              [
+                "&#127895;&#65039; Focus Sash",
+                "Survive one lethal blow at 1 HP, once per battle"
+              ],
+              [
+                "&#128293; Flame Cloak",
+                "Immune to Burn"
+              ],
+              [
+                "&#10052;&#65039; Ice Ward",
+                "Immune to Freeze and Slow"
+              ],
+              [
+                "&#9760;&#65039; Toxin Amulet",
+                "Immune to Poison"
+              ],
+              [
+                "&#129656; Iron Heart",
+                "Immune to Bleed"
+              ]
+            ]
+          },
+          "designer": "Focus Sash and Healing Berry win more battles than the flat +5s. A characteristic bonus improves a fight you were already having; a survival trigger hands you a turn you were not going to get."
+        },
+        {
+          "h": "Obtaining cards",
+          "body": "<ul>\n<li><strong>Packs</strong> — bought and opened from the shop.</li>\n<li><strong>Battle rewards</strong> — battles, campaign nodes and daily challenges pay cards as well as Cinder.</li>\n<li><strong>The Incubator</strong> — cores hatch into cards after a number of battles.</li>\n<li><strong>The Player Market and Card Shops</strong> — bought directly from other players for Cinder.</li>\n</ul>"
+        }
+      ]
+    },
+    {
+      "id": "deck",
+      "part": "Part Three · Building a Force",
+      "num": "12",
+      "title": "Deck Construction",
+      "blurb": "Forty cards, three copies, and the discipline to cut your favourites.",
+      "art": "assets/artwork/cardback.png",
+      "sections": [
+        {
+          "n": "12.1",
+          "h": "Legality",
+          "body": "<p>A legal deck contains <strong>exactly 40 cards</strong> and <strong>at most 3 copies</strong> of any one card. A deck that is not exactly 40 cards cannot be taken into a battle.</p>"
+        },
+        {
+          "n": "12.2",
+          "h": "The Curve",
+          "body": "<p>Because maximum energy rises by exactly one per turn (see <strong>2.2</strong>), a deck needs something to do on <em>every</em> turn. A workable distribution:</p>",
+          "table": {
+            "head": [
+              "Energy cost",
+              "Cards",
+              "Why"
+            ],
+            "rows": [
+              [
+                "1&ndash;2",
+                "12&ndash;16",
+                "Your first three turns. Without these you simply pass."
+              ],
+              [
+                "3&ndash;4",
+                "12&ndash;16",
+                "The body of the deck. Most real cards live here."
+              ],
+              [
+                "5&ndash;6",
+                "6&ndash;10",
+                "Your swing turns."
+              ],
+              [
+                "7+",
+                "2&ndash;5",
+                "Finishers. More than a handful and you draw dead hands."
+              ]
+            ]
+          },
+          "note": "Unsure? Cut an expensive card and add a cheap one. Decks lose far more often to a dead turn three than to a missing bomb on turn nine."
+        },
+        {
+          "n": "12.3",
+          "h": "Element Discipline",
+          "body": "<p>One element makes every synergy line up. It also means <strong>one weakness</strong> — and the several elements that beat it beat your entire deck.</p>\n<p>A sound default: one <strong>primary</strong> element for the core and its synergies, plus a <strong>secondary</strong> chosen specifically to answer the primary's worst matchups. Look your primary up in <strong>8</strong>, read its <em>weak to</em> row, and pick a secondary strong against those.</p>"
+        },
+        {
+          "n": "12.4",
+          "h": "What Every Deck Needs",
+          "body": "<ul>\n<li><strong>Early bodies.</strong> Something to play on turns 1&ndash;3 so you are not conceding ground.</li>\n<li><strong>Reach.</strong> Ways to damage what you are not standing next to.</li>\n<li><strong>An answer to a large unit.</strong> Every format has one. A deck that cannot remove or out-trade it loses to it every time.</li>\n<li><strong>Kalon targets.</strong> Cards with secret forms, in numbers. Three charges you can never spend are three charges you do not have.</li>\n</ul>"
+        },
+        {
+          "n": "12.5",
+          "h": "Cutting to Forty",
+          "body": "<p>The hard part is not choosing 40 cards. It is choosing the 40th. When one over, cut in this order:</p>\n<ol>\n<li>The card you have never been pleased to draw.</li>\n<li>The second copy of something situational.</li>\n<li>The most expensive card in the deck, before anything cheap.</li>\n<li>The card that only works when another specific card is also in play.</li>\n</ol>"
+        }
+      ]
+    },
+    {
+      "id": "heroes",
+      "part": "Part Three · Building a Force",
+      "num": "13",
+      "title": "The Roster",
+      "blurb": "Heroes persist. So does their exhaustion.",
+      "art": "assets/artwork/Ra The Sun God.png",
+      "sections": [
+        {
+          "n": "13.1",
+          "h": "Hero Advancement",
+          "body": "<p>Heroes persist between battles, gain levels and learn abilities at set levels. Hero level also gates parts of the game:</p>",
+          "table": {
+            "head": [
+              "Unlocked",
+              "Requirement"
+            ],
+            "rows": [
+              [
+                "The Camp",
+                "Hero or account Lv 3"
+              ],
+              [
+                "The Tutor Shop",
+                "Account Lv 5"
+              ],
+              [
+                "The Cashout Vault",
+                "One hero at Lv 15"
+              ],
+              [
+                "The Player Market",
+                "Two heroes at Lv 15"
+              ]
+            ]
+          }
+        },
+        {
+          "n": "13.2",
+          "h": "Fatigue",
+          "body": "<p><strong>Every battle tires a hero.</strong></p>\n<ul>\n<li>Past a threshold, a hero deploys <dfn>Injured</dfn> and <strong>takes double damage from everything</strong> for that battle.</li>\n<li>Fatigue falls on its own. A fully spent hero is clear in <strong>24 hours</strong>, and half-spent in half that.</li>\n<li>An <dfn>Exhausted</dfn> hero — one out of battle slots — suffers <strong>&minus;2 to every primary characteristic</strong>.</li>\n<li>A <dfn>Stressed</dfn> hero pays <strong>+1 energy per card</strong> at 50 stress or more, and <strong>+2</strong> at 80 or more.</li>\n</ul>",
+          "designer": "The intent is plain: rotate your roster. Three rested heroes beat one exhausted one, every time. This is the system that stops the game being about a single favourite."
+        }
+      ]
+    },
+    {
+      "id": "world",
+      "part": "Part Four · The Wider World",
+      "num": "14",
+      "title": "Outside the Battlefield",
+      "blurb": "Seven portals, six ways to fight, and the currency behind them.",
+      "art": "assets/artwork/Shadow Castle, Palace of Darkness.png",
+      "sections": [
+        {
+          "h": "The seven portals",
+          "body": "<p>You do not need all of them on the first day. Battle Hall and Forge Sanctum will carry you a long way.</p>",
+          "cards": [
+            {
+              "icon": "&#9876;&#65039;",
+              "name": "Battle Hall",
+              "text": "Fight, climb, win the day. Quick Battle, the campaign, Play Online, the Colosseum, Gym Core Wars, Ethos Heights and the Season Pass."
+            },
+            {
+              "icon": "&#128296;",
+              "name": "Forge Sanctum",
+              "text": "Craft cards, moves, sprites and decks. Where 40-card lists are built, and where the Incubator hatches cores."
+            },
+            {
+              "icon": "&#128722;",
+              "name": "Card Shop",
+              "text": "Run a storefront and visit shops other players own, buying their cards for Cinder. Open from the start."
+            },
+            {
+              "icon": "&#128176;",
+              "name": "Ruin Exchange",
+              "text": "Trade, sell and cash out. The Player Market and Cashout Vault sit behind the gates in 13.1."
+            },
+            {
+              "icon": "&#128214;",
+              "name": "The Codex",
+              "text": "Inventory, bestiary and trophies — what you have collected and what you have beaten."
+            },
+            {
+              "icon": "&#127957;&#65039;",
+              "name": "The Camp",
+              "text": "Roster, replays and leaders. Manage heroes, rest them, rewatch battles."
+            },
+            {
+              "icon": "&#9881;&#65039;",
+              "name": "Arcanum",
+              "text": "Settings and data. Account, options, saves."
+            }
+          ]
+        },
+        {
+          "h": "Ways to fight",
+          "body": "<ul>\n<li><strong>Quick Battle</strong> — pick a deck, jump in. The fastest loop in the game.</li>\n<li><strong>The Campaign</strong> — chapters of nodes against fixed opponents. The best place to learn matchups with no rating at stake.</li>\n<li><strong>Play Online</strong> — live opponents.</li>\n<li><strong>The Colosseum</strong> — ranked competition and divisions.</li>\n<li><strong>Gym Core Wars</strong> — core-based challenge battles.</li>\n<li><strong>Ethos Heights</strong> — a roguelite run through the city, taking districts back from the factions.</li>\n<li><strong>The Daily Challenge</strong> — one a day, with a modifier. <em>Energy Surge</em> raises maximum energy by 2 per turn instead of 1, which rewrites the curve in <strong>12.2</strong> entirely.</li>\n</ul>"
+        },
+        {
+          "h": "Cinder",
+          "body": "<p><dfn>Cinder</dfn> is the currency. It is earned by playing — battles, campaign nodes, daily challenges, event tiles, selling cards — and spent on packs, shop stock, market purchases and services.</p>",
+          "note": "Short on Cinder and short on cards? Buy the specific card your deck is missing rather than a pack. A deck with its last slot filled wins more battles than a deck with one more random Rare in the pile."
+        }
+      ]
+    },
+    {
+      "id": "quickref",
+      "part": "Appendix",
+      "num": "A",
+      "title": "Quick Reference",
+      "blurb": "The whole game on one page. Print this one.",
+      "art": "assets/artwork/Mother Hydra.png",
+      "sections": [
+        {
+          "h": "Core numbers",
+          "body": "",
+          "table": {
+            "head": [
+              "",
+              "",
+              ""
+            ],
+            "rows": [
+              [
+                "Battlefield",
+                "14 &times; 12 tiles",
+                "1.1"
+              ],
+              [
+                "Victory",
+                "Reduce the enemy hero to 0 HP",
+                "1.4"
+              ],
+              [
+                "Deck size",
+                "Exactly 40 cards",
+                "12.1"
+              ],
+              [
+                "Copies of one card",
+                "Maximum 3",
+                "12.1"
+              ],
+              [
+                "Opening hand",
+                "5 cards",
+                "2.3"
+              ],
+              [
+                "Starting energy",
+                "1",
+                "2.2"
+              ],
+              [
+                "Energy gain",
+                "+1 maximum per turn",
+                "2.2"
+              ],
+              [
+                "Energy ceiling",
+                "10",
+                "2.2"
+              ],
+              [
+                "Unit activation",
+                "Move <em>and</em> one attack or ability",
+                "4.1"
+              ],
+              [
+                "Super-effective",
+                "&times;2.0 damage",
+                "5.2"
+              ],
+              [
+                "Resisted",
+                "&times;0.5 damage",
+                "5.2"
+              ],
+              [
+                "Kalon charges",
+                "3 per battle, 1 per turn",
+                "7.1&ndash;7.2"
+              ],
+              [
+                "Elements",
+                "21",
+                "8"
+              ],
+              [
+                "Factions",
+                "42",
+                "9"
+              ],
+              [
+                "Rarities",
+                "6",
+                "11"
+              ]
+            ]
+          }
+        },
+        {
+          "h": "The battle round",
+          "body": "",
+          "seq": [
+            {
+              "h": "Start of Turn",
+              "body": "Maximum energy +1 (cap 10), pool refills. Damage-over-time resolves. Kalon seals count down."
+            },
+            {
+              "h": "Action Step",
+              "body": "Play cards. Move and act with units — each unit moves <em>and</em> takes one action."
+            },
+            {
+              "h": "End of Turn",
+              "body": "Pass to the opponent. Unspent energy is lost."
+            }
+          ]
+        },
+        {
+          "h": "Ten rules of thumb",
+          "body": "<ol>\n<li>Spend all your energy every turn, or have a real reason not to.</li>\n<li>Check the element before you check the characteristic line.</li>\n<li>Never leave your hero unscreened.</li>\n<li>Moving costs energy. Count it before committing.</li>\n<li>A unit moves <em>and</em> acts once — never twice.</li>\n<li>Do not move into range if you cannot attack this turn.</li>\n<li>Spend Kalon charges on moments that change the result.</li>\n<li>Cut the expensive card, not the cheap one.</li>\n<li>Cover your primary element's weaknesses with your secondary.</li>\n<li>Rotate your heroes. Fatigue doubles the damage you take.</li>\n</ol>"
+        }
+      ]
+    },
+    {
+      "id": "glossary",
+      "part": "Appendix",
+      "num": "B",
+      "title": "Glossary",
+      "blurb": "Every defined term, in one place.",
+      "art": "assets/artwork/gameicons/Codex book.png",
+      "sections": [
+        {
+          "h": "Defined terms",
+          "body": "<dl>\n<dt>Characteristics</dt><dd>The six numbers on every unit: HP, ATK, DEF, MAG, RES, SPD. See <strong>1.3</strong>.</dd>\n<dt>Cinder</dt><dd>The game's currency. See <strong>14</strong>.</dd>\n<dt>Energy</dt><dd>The resource that pays for cards and movement. See <strong>2.2</strong>.</dd>\n<dt>Event tile</dt><dd>A marked tile claimed by moving your hero onto it. See <strong>1.5</strong>.</dd>\n<dt>Exhausted</dt><dd>A hero with no battle slots left; &minus;2 to every primary characteristic. See <strong>13.2</strong>.</dd>\n<dt>Fatigue (deck)</dt><dd>Damage suffered when drawing from an empty deck. See <strong>2.4</strong>.</dd>\n<dt>Hero</dt><dd>Your commander on the battlefield. At 0 HP you lose. See <strong>1.2</strong>.</dd>\n<dt>Injured</dt><dd>A heavily fatigued hero; takes double damage for the battle. See <strong>13.2</strong>.</dd>\n<dt>Kalon charge</dt><dd>One of three per-battle transformations. See <strong>7.1</strong>.</dd>\n<dt>Location</dt><dd>A card covering the battlefield with terrain. Only one at a time. See <strong>3.6</strong>.</dd>\n<dt>Resisted</dt><dd>An attack whose element the target is strong against. &times;0.5. See <strong>5.2</strong>.</dd>\n<dt>Seal</dt><dd>An effect preventing Kalon transformation for a number of turns. See <strong>7.4</strong>.</dd>\n<dt>Secret form</dt><dd>The transformed profile a Kalon charge unlocks. See <strong>7.1</strong>.</dd>\n<dt>Stressed</dt><dd>A hero paying extra energy per card. See <strong>13.2</strong>.</dd>\n<dt>Super-effective</dt><dd>An attack whose element the target is weak to. &times;2. See <strong>5.2</strong>.</dd>\n<dt>Sworn opposites</dt><dd>An element pair striking each other at &times;2 with no resistance either way. See <strong>5.2</strong>.</dd>\n<dt>Tile</dt><dd>One square of the battlefield. Holds at most one unit. See <strong>1.1</strong>.</dd>\n<dt>Weather</dt><dd>A card changing conditions for both players. See <strong>3.5</strong>.</dd>\n</dl>"
+        }
+      ]
+    }
+  ]
+}

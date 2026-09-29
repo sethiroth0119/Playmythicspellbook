@@ -1,0 +1,12 @@
+{
+  "name": "warpath-sim",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Four-player WARPATH simulator: real RPCs, real Postgres, four independent sessions.",
+  "scripts": {
+    "sim": "node sim.mjs",
+    "browser": "node browser-sim.mjs"
+  },
+  "dependencies": { "pg": "^8.11.0" }
+}

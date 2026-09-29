@@ -1,0 +1,11 @@
+.fx-two .editor-grid > .editor-field.full:has(> div > label > input[type="checkbox"]) { grid-column: 1 / -1; }
+.fx-two .editor-field.full > div > label:has(> input[type="checkbox"]) { flex: 1 1 21rem; min-width: min(100%, 21rem); max-width: 26rem; }
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { width: 29px !important; height: 29px !important; }
+.fx-two label:has(> input[type="checkbox"]), .fx-two label:has(> input[type="radio"]) { padding: 4px 9px; }
+.fx-two .fx-sub > .editor-grid { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+@media (max-width: 1080px) {
+  .fx-two .editor-grid > .editor-field.full { max-width: 44rem; }
+  .fx-two .editor-grid > .editor-field.full:has(label > input[type="checkbox"]),
+  .fx-two .editor-grid > .editor-field.full:has(.faction-picker),
+  .fx-two .editor-grid > .editor-field.full:has([style*="grid-template"]) { max-width: none; }
+}

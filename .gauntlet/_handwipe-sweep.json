@@ -1,0 +1,2618 @@
+[
+ {
+  "eid": "intimidate",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "aoeDamage",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "aoeKill",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "aoeStatus",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "heal",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "buffSelf",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "buffAllies",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "energyGain",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "drawCards",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 7,
+   "deck": 33,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "kalonSource",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "bounceUnit",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "singleKill",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "takeControl",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "takeControlAll",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sacrificeNearby",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "summonSelf",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "vanishTemp",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sendMatching",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "empowerTeam",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "transformAlly",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "summon",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "polycreate",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "searchDeck",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "paintSurface",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "discardCards",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "peekHand",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "peekDiscard",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "peekBanish",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "millSelf",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 33,
+   "grave": 5,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "millSearch",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "discardSelf",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 3,
+   "deck": 35,
+   "grave": 5,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "reviveGrave",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 2,
+   "void": 0,
+   "total": 42,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "graveToHand",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 7,
+   "deck": 35,
+   "grave": 1,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "selfToHand",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "banishGrave",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 0,
+   "void": 3,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": true
+ },
+ {
+  "eid": "vanishGraveRandom",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 1,
+   "void": 2,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "vanishGravePick",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "vanishGraveUnit",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "negateGraveyard",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "clearWeather",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "clearTraps",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "revealTraps",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "clearWalls",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "clearSurfaces",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "scanAllEnemies",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "scanAllTurn",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "boardWipe",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "purgeAscended",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "applyBuffDebuff",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sacrifice",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "verdict",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "damageHero",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "healHero",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "deckToGrave",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 33,
+   "grave": 5,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "drawFiltered",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 7,
+   "deck": 33,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "negateField",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "vanishReturn",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "destroyTarget",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "purityPact",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "buffPerCard",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "destroyFrozen",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "burnBurst",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "vanishTribe",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "costSeal",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "graveSteal",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 2,
+   "void": 0,
+   "total": 42,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "targetStrike",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "shuffleToDeck",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 0,
+   "deck": 44,
+   "grave": 0,
+   "void": 0,
+   "total": 44,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": true,
+  "graveWiped": true
+ },
+ {
+  "eid": "bestow",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "callLock",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "banishUnit",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "millEnemy",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "surveil",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "banishDeck",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "banishHand",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "damageFromGrave",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "drawFromVoid",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "recycleVoid",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "voidFromGrave",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 1,
+   "void": 2,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "fight",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "proliferate",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "scry",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "inspire",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "swapAtkDef",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "equipStats",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "drainLife",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "readyAllies",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "damagePerCard",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "stealStatus",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "cloneUnit",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "cheapenHand",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "pullUnits",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "pushUnits",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "destroyLocation",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "swapPositions",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "chainDamage",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "tributeDraw",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "weatherLock",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "mirrorStats",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "stealCard",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sealSlot",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "delayedBlast",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "rewind",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "copyLastMove",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "summonFromZone",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": true,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "setWeather",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "setTimeOfDay",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "setFromZone",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 33,
+   "grave": 3,
+   "void": 0,
+   "total": 41,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sacrificeSelf",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 4,
+   "void": 0,
+   "total": 44,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ },
+ {
+  "eid": "sacrificeToSummon",
+  "before": {
+   "hand": 5,
+   "deck": 35,
+   "grave": 3,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "after": {
+   "hand": 5,
+   "deck": 34,
+   "grave": 4,
+   "void": 0,
+   "total": 43,
+   "modal": false,
+   "turn": 1
+  },
+  "err": null,
+  "handWiped": false,
+  "graveWiped": false
+ }
+]

@@ -1,0 +1,1179 @@
+/* ============================================================================
+   hub-keep.css — THE KEEP FOUNDATION.
+   public/src/hubui/hub-keep.css   (served as /src/hubui/hub-keep.css)
+
+   THE CLAUSE THIS FILE ANSWERS — docs/hub-ui-bar.md
+     §1 in full (the shared visual language: ground, gold, parchment, purple,
+        type, frames, ornaments)
+     §3 Background · Top bar · Title block · Bottom  (the sub-hub SHELL)
+     §4 "One back button"  and  "Every state earns its keep"
+     §0 the `display:none` on sub-hub background art is gone (see §B below)
+
+   WHAT THIS FILE OWNS — three things, in this order:
+     A. THE TOKENS. This is the ONLY place `--keep-*` is declared. Every other
+        sheet in the hub-UI set (hub-tiles, hub-chrome, hub-transitions)
+        CONSUMES them and declares none. Values are ported verbatim from
+        docs/bar/comp-hub.html lines 27-50, renamed to the `--keep-` prefix.
+     B. THE PRIMITIVES. The bevelled stone plaque, the stamped-metal gold type
+        treatment, and the ONE back-button component (`.keep-tab`).
+     C. THE SUB-HUB SHELL. Background stack, top bar, title block, footer, and
+        the player group in the top-right.
+
+   WHAT THIS FILE MUST NOT DO
+     Tile chrome. `.hub-portal` and everything inside it belongs to
+     hub-tiles.css. The only thing done to the tile band here is a plain
+     centred flex fallback for `.hub-portal-grid`, at the lowest useful
+     specificity, so a hub is never an unlaid-out pile if the tile sheet is
+     absent. Any real grid decision overrides it trivially.
+
+   ── THREE THINGS THAT LOOK LIKE MISTAKES AND ARE NOT ────────────────────
+   1. Gold "stamped metal" type takes its hard dark shadow from
+      `filter: drop-shadow()`, NEVER `text-shadow`. Chromium paints text-shadow
+      ON TOP of a `background-clip:text` fill, which hollows every glyph into an
+      outline. Any rule below that sets a gold gradient fill therefore also sets
+      `text-shadow:none` — the legacy `.hub-title` ships one and it must die.
+   2. `.keep-tab` and `.keep-plaque` build their two-layer frame out of a
+      `::before`, not a wrapper element. See §B3 for why and how.
+   3. No `!important` anywhere in this file. The one place it would be needed —
+      out-shouting the legacy inline `<style>` — is solved instead by deleting
+      those rules from index.html, which is where they came from.
+   ============================================================================ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   A · TOKENS  (§1 — the shared visual language)
+   Declared on :root so the main menu, the sub-hubs and any future keep surface
+   read from one dictionary. Ported from comp-hub.html :root, value for value.
+   ════════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── GROUND. Near-black, WARM, never blue-black. Painted art shows through
+        at low luminance. No large flat purple field anywhere. ── */
+  --keep-ground-0: #0b0906;
+  --keep-ground-1: #12100c;
+  --keep-stone-hi: #1a150e;          /* plaque fill, top */
+  --keep-stone-lo: #0d0a07;          /* plaque fill, bottom */
+
+  /* ── GOLD. One family, three weights (§1). ── */
+  --keep-gold-line:      rgba(138, 111, 60, 0.55);  /* #8a6f3c @ 45-60% — structural hairline */
+  --keep-gold-line-soft: rgba(138, 111, 60, 0.42);
+  --keep-gold:      #c9ab72;         /* body gold — labels, values */
+  --keep-gold-body: #c9ab72;         /* alias; both names are in use downstream */
+  --keep-gold-hi:   #e8c877;         /* titles, active, hover */
+  --keep-gold-hi-2: #f2dda2;         /* top of the highlight ramp */
+  --keep-gold-lit:  #fff6e0;         /* the hot core — VFX only, never a rest colour */
+  --keep-gold-grey: #9a8d6c;         /* italic sub-labels, ToS, muted caps */
+  --keep-ember:     #ff8a28;         /* heat, for hub-transitions' torch pass */
+
+  /* ── PARCHMENT. §1 reserves this for the dispatch/news card only. ── */
+  --keep-parch:     #d9cba8;
+  --keep-parch-ink: #2b2118;
+
+  /* ── PURPLE. An ACCENT only: a promoted tile's frame, a "special" badge
+        outline, an ornament. Never a background. ── */
+  --keep-violet:    #6b4fa0;
+  --keep-violet-hi: #9a7ad0;
+
+  /* ── FRAME INSETS. Every plaque carries both: a warm top highlight and a
+        hard dark liner just inside the gold hairline. ── */
+  --keep-emboss: inset 0 1px 0 rgba(246, 220, 149, 0.10);
+  --keep-liner:  inset 0 0 0 1px rgba(0, 0, 0, 0.7);
+  /* The soft outer drop shadow, as a filter (so it follows the notched clip
+     instead of boxing it — box-shadow would paint a rectangle around an
+     octagon). */
+  --keep-drop:    drop-shadow(0 6px 13px rgba(0, 0, 0, 0.60));
+  --keep-drop-lo: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.70));
+
+  /* ── NOTCHED / OCTAGONAL CORNERS. ~10px cut. NOT rounded rectangles.
+        -10 is the outer frame, -9 the inner face 1px inside it; -7/-6 are the
+        same pair one level down (art panels, small pods). ── */
+  --keep-oct-10: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+  --keep-oct-9:  polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
+  --keep-oct-7:  polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px);
+  --keep-oct-6:  polygon(6px 0, calc(100% - 6px) 0, 100% 6px, 100% calc(100% - 6px), calc(100% - 6px) 100%, 6px 100%, 0 calc(100% - 6px), 0 6px);
+  /* ⚠ A corner cut only reads as a notch while it is STRICTLY LESS THAN HALF the
+     box's shorter side. Above that the two cuts on one edge cross and the
+     polygon self-intersects: `--keep-oct-6` on the 8px-tall XP gauge put the
+     top and bottom cuts 2px apart, and Chromium resolved the bowtie into two
+     tapered hairlines with a detached 1px stub floating off each end — at 0 XP,
+     the signed-out first impression, that WAS the whole element. This is the
+     size for anything under ~14px tall. */
+  --keep-oct-3:  polygon(3px 0, calc(100% - 3px) 0, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 0 calc(100% - 3px), 0 3px);
+
+  /* ── MOTION. Never linear (§3). ── */
+  --keep-ease: cubic-bezier(.22, .61, .36, 1);
+  --keep-fast: 0.16s;
+
+  /* ── TYPE. Cinzel throughout; sub-labels are an italic serif. No sans-serif
+        anywhere in menu chrome (§1). ── */
+  --keep-cinzel:   'Cinzel', 'CinzelEmb', Georgia, serif;
+  --keep-serif-it: Georgia, 'Liberation Serif', 'Times New Roman', serif;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   B · PRIMITIVES  (§1 Frames · §1 Gold · §4 One back button)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── B1 · THE BEVELLED STONE PLAQUE ──────────────────────────────────────
+   1px gold hairline, an inset warm top highlight, a hard dark liner, notched
+   corners, a soft outer drop shadow. The hairline is not a `border`: a border
+   on a clip-path'd box gets sliced at the notches. Instead the ELEMENT is the
+   gold, and a `::before` inset by 1px paints the dark face on top of it, so
+   exactly 1px of gold survives all the way round every one of the eight edges.
+   ──────────────────────────────────────────────────────────────────────── */
+.keep-plaque {
+  position: relative;
+  /* `isolation` + a z-index:-1 ::before is what lets this work on a BARE
+     element with no inner wrapper — see B3. */
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  clip-path: var(--keep-oct-10);
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.55), rgba(138, 111, 60, 0.30));
+  filter: var(--keep-drop);
+  font-family: var(--keep-cinzel);
+  color: var(--keep-gold);
+}
+.keep-plaque::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #171208 0%, #0c0906 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  pointer-events: none;
+}
+
+/* ── B2 · STAMPED METAL (§1 "It must read as stamped metal, not as coloured
+   text"). A vertical gold ramp clipped to the glyphs, a HARD dark shadow and a
+   faint warm bloom — both from `filter`, because Chromium paints `text-shadow`
+   over the clipped fill and hollows the letters out. `text-shadow:none` is not
+   tidiness: the legacy `.hub-title` ships one, and it is the exact bug. ── */
+.keep-stamp {
+  background: linear-gradient(180deg, #f9edcb 0%, #eccd83 42%, #c9a45a 74%, #a67f3c 100%);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.85)) drop-shadow(0 0 30px rgba(232, 200, 119, 0.30));
+}
+
+/* ── B3 · THE ONE BACK BUTTON — `.keep-tab` (§4) ─────────────────────────
+   The tab-plaque form from Comp B. ONE component, identical on every page.
+
+   ⚠ THE CONSTRAINT THAT SHAPED IT: this must work applied to a bare
+     `<button class="keep-tab">MAIN HUB</button>` with NOTHING inside it,
+     because it gets bolted onto ~10 legacy back buttons across the app whose
+     markup cannot be restructured. The comp builds the two-layer frame as
+     `.tab > .tab-in` — an inner wrapper element. That is not available here.
+
+   THE TECHNIQUE (and why each half is load-bearing):
+     · The BUTTON is the gold frame — its own background is the gold gradient,
+       cut by `clip-path: var(--keep-oct-10)`.
+     · `::before` is the dark face — `inset:1px`, `clip-path: --keep-oct-9`,
+       carrying the emboss + liner. Inset by 1px, so 1px of the parent's gold
+       shows all the way round.
+     · The face must sit ABOVE the button's own background but BELOW its text.
+       A pseudo-element at `z-index:-1` paints above its parent's background
+       and below its parent's inline content — exactly the sandwich needed.
+     · `isolation: isolate` on the button pins that -1 inside the button. Without
+       it, the negative z-index escapes to the nearest ancestor stacking context
+       and the dark face paints behind the page background, i.e. vanishes.
+     · No inner element means the padding lives on the button, and the text is
+       a direct child, so `.keep-tab` styles the label directly.
+   ──────────────────────────────────────────────────────────────────────── */
+.keep-tab {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 22px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  clip-path: var(--keep-oct-10);
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.60), rgba(138, 111, 60, 0.34));
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.62));
+  font-family: var(--keep-cinzel);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-indent: 0.11em;              /* pay back the trailing letterspace */
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  color: #b0996f;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+  -webkit-appearance: none;
+          appearance: none;
+  /* `background` is in the list although nothing animates it today: the outer
+     element carries the gold FRAME gradient, the ::before carries the face, and
+     the two must cross-fade together or a future hover state on the frame would
+     snap while the face eased. Symmetry with the ::before's transition below. */
+  transition: filter     var(--keep-fast) var(--keep-ease),
+              color      var(--keep-fast) var(--keep-ease),
+              background var(--keep-fast) var(--keep-ease);
+}
+.keep-tab::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #181309 0%, #0d0a07 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  transition: background var(--keep-fast) var(--keep-ease),
+              box-shadow var(--keep-fast) var(--keep-ease);
+  pointer-events: none;
+}
+/* The `←` — optional. `.keep-tab` is complete without it. */
+.keep-tab .keep-tab-arrow {
+  font-size: 15px;
+  line-height: 1;
+  color: #8d7a55;
+  margin-right: 1px;
+  text-indent: 0;
+  transition: color var(--keep-fast) var(--keep-ease);
+}
+
+/* The current page's tab: brighter frame, lighter fill, highlight-gold label.
+   A breadcrumb built out of tabs, not a text arrow (§3 Top bar). */
+.keep-tab.is-current {
+  background: linear-gradient(180deg, rgba(242, 221, 162, 0.85), rgba(180, 145, 74, 0.55));
+  color: var(--keep-gold-hi);
+  cursor: default;
+}
+.keep-tab.is-current::before {
+  background: linear-gradient(180deg, #2b2113 0%, #191207 100%);
+}
+
+/* ── §4 "Every state earns its keep": rest · hover · active · focus-visible
+      · disabled. The tab lights up and presses; it never moves or scales. ── */
+.keep-tab:hover {
+  color: var(--keep-gold-hi);
+}
+.keep-tab:hover::before {
+  background: linear-gradient(180deg, #221a0f 0%, #120d08 100%);
+}
+.keep-tab:hover .keep-tab-arrow { color: var(--keep-gold-hi); }
+.keep-tab.is-current:hover::before { background: linear-gradient(180deg, #322616 0%, #1d1509 100%); }
+
+.keep-tab:active {
+  filter: var(--keep-drop-lo);
+  color: var(--keep-gold);
+}
+.keep-tab:active::before {
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.85), var(--keep-liner);
+}
+
+/* The ring is INSET — the notched clip-path would shave an outside outline off
+   at all four corners. */
+.keep-tab:focus-visible { outline: none; }
+.keep-tab:focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--keep-gold-hi), var(--keep-liner);
+}
+.keep-tab:focus:not(:focus-visible) { outline: none; }
+
+/* DISABLED — desaturated gold at 40% with the frame dropped to hairline only.
+   Never a bare `opacity:.5` (§4). */
+.keep-tab:disabled,
+.keep-tab[disabled],
+.keep-tab[aria-disabled="true"],
+.keep-tab.is-disabled {
+  cursor: not-allowed;
+  background: rgba(138, 111, 60, 0.28);
+  filter: none;
+  color: rgba(201, 171, 114, 0.40);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8);
+}
+.keep-tab:disabled::before,
+.keep-tab[disabled]::before,
+.keep-tab[aria-disabled="true"]::before,
+.keep-tab.is-disabled::before {
+  background: linear-gradient(180deg, #141210 0%, #0b0a08 100%);
+  box-shadow: var(--keep-liner);
+}
+.keep-tab:disabled .keep-tab-arrow,
+.keep-tab[disabled] .keep-tab-arrow,
+.keep-tab.is-disabled .keep-tab-arrow { color: rgba(201, 171, 114, 0.40); }
+
+/* ── B4 · SQUARE GLYPH PLAQUE — a `.keep-plaque` sized to one 21px line-art
+   glyph. Comp B puts the speaker beside the player group as its own pod. ── */
+.keep-glyph-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-appearance: none;
+          appearance: none;
+  transition: filter var(--keep-fast) var(--keep-ease);
+}
+.keep-glyph {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: var(--keep-gold);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.9));
+  transition: stroke var(--keep-fast) var(--keep-ease);
+}
+.keep-glyph-btn:hover { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6)) brightness(1.25); }
+.keep-glyph-btn:hover .keep-glyph { stroke: var(--keep-gold-hi); }
+.keep-glyph-btn:active { filter: var(--keep-drop-lo); }
+.keep-glyph-btn:active::before { box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.85), var(--keep-liner); }
+.keep-glyph-btn:focus-visible { outline: none; }
+.keep-glyph-btn:focus-visible::before { box-shadow: inset 0 0 0 2px var(--keep-gold-hi), var(--keep-liner); }
+.keep-glyph-btn:focus:not(:focus-visible) { outline: none; }
+.keep-glyph-btn:disabled,
+.keep-glyph-btn[disabled] {
+  cursor: not-allowed;
+  filter: none;
+  background: rgba(138, 111, 60, 0.28);
+}
+.keep-glyph-btn:disabled .keep-glyph,
+.keep-glyph-btn[disabled] .keep-glyph { stroke: rgba(201, 171, 114, 0.40); }
+/* Music is one button holding both states; the live one is chosen by data-on,
+   which `_wireHubCurrencyRail()` flips. (It used to swap `textContent` for an
+   emoji — that would have blown away the SVGs on the first click.) */
+.keep-glyph-btn[data-on="1"] .keep-glyph-off,
+.keep-glyph-btn[data-on="0"] .keep-glyph-on { display: none; }
+
+/* ── B5 · ORNAMENTS (§1 "sparse and deliberate"). The gold rule with a diamond
+   boss at its centre, used under every sub-hub title. ── */
+.keep-rule {
+  width: 560px;
+  max-width: 82vw;
+  height: 14px;
+  margin: 16px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.keep-rule i {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(138, 111, 60, 0.72) 42%, rgba(200, 168, 105, 0.85));
+}
+.keep-rule i + i {
+  background: linear-gradient(270deg, transparent, rgba(138, 111, 60, 0.72) 42%, rgba(200, 168, 105, 0.85));
+}
+.keep-diamond {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--keep-gold-hi-2), #a67f3c);
+  box-shadow: 0 0 14px rgba(232, 200, 119, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   C · THE SUB-HUB SHELL  (§3)
+   Everything below is scoped `.spellbook-hub.is-sub`. The main hub is the
+   iframe menu and is never touched here.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── C0 · THE DOCUMENT GROUND ─────────────────────────────────────────────
+   index.html:137-147 paints `body` with two violet radial washes over
+   `--bg-deep`, which is a blue-black. `.spellbook-hub-bg` is
+   `position:fixed;inset:0` so on a screen that fits, nothing shows through —
+   but the hub is a `min-height:100vh` flex column and the Ruin Exchange runs
+   past the fold, and the moment the document is taller than the viewport the
+   band below it is the BODY's ground: visibly indigo, under a shell whose §1
+   says "warm, never blue-black" and "no large flat purple field". It is also
+   what every 1920x1080 screenshot shows below the 993px layout viewport.
+   Scoped with `:has()` so this is the hub screens' business only — the rest of
+   the app keeps the ground it was designed against. The noise overlay at
+   index.html:148 is warm-neutral at .035 and stays. */
+html:has(.spellbook-hub),
+html:has(.spellbook-hub) body {
+  background: var(--keep-ground-0);
+}
+
+/* ── C1 · PAGE ─────────────────────────────────────────────────────────────
+   comp-hub.html `.stage`: padding 24px 44px 0, a flex column of
+   topbar → title block → tile band → foot. */
+.spellbook-hub.is-sub {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 44px 0;
+  color: var(--keep-gold);
+  font-family: var(--keep-cinzel);
+  /* ⚠ NO `background` HERE, EVER. `.spellbook-hub-bg` is a `position:fixed`
+     child at `z-index:-2`, and `.spellbook-hub` is `position:relative` with
+     `z-index:auto` — so it is NOT a stacking context and that negative child
+     rises to the ROOT stacking context, i.e. it paints BEHIND this element's
+     own background. Painting the ground here (which the first cut of this file
+     did) hides the painted art on every sub-hub just as effectively as the
+     `display:none` §0 told us to delete. The ground colour belongs on
+     `.spellbook-hub-bg` — see C2. */
+
+  /* Tile SIZE lives on the hub root, not on the grid, so a per-hub override can
+     out-specify it (hub-tiles.css §"VAR BINDING" asks for exactly this). The
+     numbers are Comp B's — ~300x330 with a 178px art panel. The tile sheet owns
+     what the tile LOOKS like; the shell only says how big a slot it gets. */
+  --hub-tile-w: 300px;
+  --hub-tile-min-h: 330px;
+  --hub-art-h: 178px;
+}
+
+/* ── C2 · BACKGROUND (§0 + §3) ─────────────────────────────────────────────
+   THE RULE THAT HAD TO GO: index.html carried
+     `.spellbook-hub.is-sub .spellbook-hub-bg img.hub-bg-img { display: none }`
+   which hid the painted art on every sub-hub. It is deleted at source, not
+   overridden here — an override would leave the corpse in the file for the
+   next reader to trip over.
+
+   Four layers, exactly as comp-hub.html paints them:
+     img.hub-bg-img  the painted plate, per hub  (brightness .80 / saturate .80)
+     ::before        warm near-black wash + vignette. No blue-black, no purple.
+     ::after         a faint grain so the wash never reads as a flat gradient
+     .spellbook-embers  the app's existing embers, dimmed to a suggestion
+   ────────────────────────────────────────────────────────────────────────── */
+.spellbook-hub.is-sub .spellbook-hub-bg {
+  background-color: var(--keep-ground-0);
+}
+
+/* 🐛 THE `position:fixed` THAT WAS NEVER FIXED — measured, not read.
+   `.spellbook-hub-bg` is `position:fixed; inset:0` (index.html:330) and the whole
+   of C2 above assumes that means "the viewport". It did not. `#app` carries
+   `.page-fade-in`, whose animation is `220ms ease-out both` with a 100% keyframe
+   of `transform: translateY(0)` (index.html:111818-111824). `fill-mode: both`
+   RETAINS that endpoint forever, so `#app` computes `transform: matrix(1,0,0,1,0,0)`
+   — an identity matrix, but not `none`, and any non-`none` transform makes the
+   element the containing block for every `position:fixed` descendant.
+
+   index.html:155793 already documents this exact bug (the DVS modal is portalled
+   out to <body> to escape it); the keep shell walked into it from the other side.
+
+   Measured on Ruin Exchange, the one hub whose tiles overflow: viewport 993px,
+   document 1678px, and `.spellbook-hub-bg` came back 1678px tall with its top at
+   -300 after a 300px scroll. So the painted plate was being `object-fit: cover`-ed
+   into a box 69% taller than the frame it is composed for — a different crop than
+   the comp on every tall hub — and it SCROLLED WITH THE TILES instead of sitting
+   still behind them. Every wash, vignette and grain layer in C2 is sized off that
+   same box, so all of them stretched with it.
+
+   The fix is the endpoint, not the animation: re-run the same fade under a name
+   whose only keyframe is 0%, so there is no retained transform and `#app` goes
+   back to `transform: none`. The 4px whole-page nudge goes with it, deliberately —
+   §3's entrance (hub-transitions.css) already moves the background, title, tiles
+   and footer on its own schedule, and a second nudge of the entire page underneath
+   that was fighting it. Keeping a transform for even one frame is not an option:
+   it would re-create the containing block during the fade and the plate would
+   visibly rescale when the animation released it.
+
+   Scoped with `:has(> .spellbook-hub.is-sub)` so this is the sub-hub shell's
+   business only — no other screen's fixed layout moves. */
+html body #app.page-fade-in:has(> .spellbook-hub.is-sub) {
+  animation-name: keepPageFadeIn;
+}
+@keyframes keepPageFadeIn {
+  0% { opacity: 0; }
+}
+
+/* 🐛 THE STACKING BUG THAT MADE THE WASH INERT — the single most expensive
+   thing in this file, found by measurement and not by reading.
+   `::before` is inserted as the FIRST child of its originating element. Every
+   layer in this stack is `position:absolute` with `z-index:auto`, and
+   same-stacking-context positioned boxes paint in TREE ORDER. So the order was
+   ::before (the wash) → img (the plate) → and the plate painted straight over
+   the wash. Every scrim, vignette and warm layer in this file was being drawn
+   and then covered up; the ONLY thing darkening a sub-hub was the plate's own
+   `filter: brightness()`, which is exactly why round 1 could not level six
+   plates without six hand-tuned exposures, and why re-tuning the top scrim
+   produced byte-identical title-band luminance (14.1 before, 14.1 after — the
+   measurement that caught it).
+   The legacy vignette at index.html:345 has been dead the same way for as long
+   as it has existed.
+   Every layer therefore gets an EXPLICIT z-index, bottom to top, in the comp's
+   own order (comp-hub.html: art → silhouettes → wash → grain). Do not remove
+   these and trust source order. */
+.spellbook-hub.is-sub .spellbook-hub-bg img.hub-bg-img {
+  z-index: 0;
+  filter: var(--keep-bg-filter, brightness(0.80) saturate(0.80) contrast(1.04));
+  transform: scale(var(--keep-bg-zoom, 1));
+  transform-origin: 50% 100%;
+}
+
+/* ── PER-HUB EXPOSURE ─────────────────────────────────────────────────────
+   §3 gives ONE filter — `brightness(.80) saturate(.80)`. Round 1 tried to make
+   six very different plates land on one ground by giving each its own
+   `brightness()`, and it did not work: measured against the comp's gutter
+   (mean 9.6, rgb [11,9,7], R−B 4 — distinctly warm), Forge came back at mean
+   21 rgb [21,20,19], i.e. NEUTRAL GREY, the one thing §1 forbids by name,
+   while Exchange was crushed to [0,0,0] — the painted art gone, which fights
+   the hard requirement to keep every background image.
+   Round 2 over-corrected the other way: .54 (Codex) to .62 (Camp) against the
+   comp's single .80, which on top of the flat veil that used to sit in the wash
+   (see the bug note below) darkened four of six plates a further 25-33% and
+   turned painted art into fog.
+   Every filter here is now inside .74-.80 — the comp's own stop, give or take
+   one notch for the two loudest plates. The title band does NOT need the plate
+   dimmed to get its floor: wash layers 1 and 2 are opaque scrims sitting ABOVE
+   the plate exactly where the type is, and they level the six hubs on their own.
+   `sepia()` stays on the cold plates, and it is not the same tool as a scrim:
+   sepia is a linear colour matrix with no offset term, so black maps to black
+   and a 255 red stays near 255 — it rotates hue without lifting the floor or
+   clipping the peak. That is why warming a plate is contrast-safe and warming
+   the frame with a constant-alpha layer is not.
+   `--keep-bg-zoom` crops a plate — used three times, and only to get burnt-in
+   English signage or a second wordmark out of frame. Those stay.
+   */
+.spellbook-hub.is-sub[data-hub="battle"]   { --keep-bg-filter: brightness(0.80) saturate(0.80) contrast(1.04); }
+.spellbook-hub.is-sub[data-hub="arcanum"]  { --keep-bg-filter: brightness(0.74) saturate(0.76) contrast(1.05) sepia(0.10); }
+/* RUIN EXCHANGE. `darkmarket background.png` is lit in cold violet, which under
+   §1 is the one hue that must not become a field. saturate() alone only mutes
+   it; sepia() rotates it into the gold family without touching the black floor,
+   so the market keeps its lamps and loses its purple cast. */
+.spellbook-hub.is-sub[data-hub="exchange"] { --keep-bg-filter: brightness(0.78) saturate(0.38) contrast(1.05) sepia(0.44); }
+/* THE CODEX. Same signage problem as Forge, milder: the `Deck Select` plate has
+   two carved notices in its top-left — "Silence · Knowledge is sacred" and
+   "Disobedience invites punishment" — which land beside the breadcrumb and read
+   as UI copy. A modest crop from the bottom edge takes both out of frame and
+   pushes the scribe down under the tile band where it belongs. */
+.spellbook-hub.is-sub[data-hub="codex"] {
+  --keep-bg-filter: brightness(0.76) saturate(0.52) contrast(1.05) sepia(0.34);
+  --keep-bg-zoom: 1.28;
+}
+/* FORGE. `equipment background.png` is a ruined gun store and its top third
+   carries burnt-in English signage — "FREEDOM FIREARMS · GUNS AMMO SURVIVAL",
+   "THANK YOU FOR YOUR BUSINESS" — legible at UI size and reading as a second,
+   wrong headline under the Cinzel title. The comp's plate carries no text at
+   all. Zooming from the bottom edge crops the top ~37% and every sign with it,
+   leaving the counters and rubble, which is what an armoury floor should look
+   like. The image is kept, as required; only the framing changed. */
+.spellbook-hub.is-sub[data-hub="forge"] {
+  /* The concrete-and-daylight cast of this plate reads NEUTRAL GREY under a
+     warm shell — §1 names grey and blue-black as the two grounds to avoid.
+     saturate() alone only mutes it; sepia() rotates the whole plate into the
+     gold family with no offset term, so the black floor and the highlight peak
+     both survive. Measured G against B in the mid-field: cooler than the wash
+     before, warmer than it after. */
+  --keep-bg-filter: brightness(0.74) contrast(1.06) sepia(0.92) saturate(1.25);
+  --keep-bg-zoom: 1.62;
+  /* ⚠ FILTER ORDER IS THE WHOLE TRICK. `saturate()` BEFORE `sepia()` mutes the
+     plate and then sepia has almost nothing left to rotate, which is how round 3
+     first read: still concrete-grey at sepia(.52). Putting a near-full sepia
+     first and saturating AFTER intensifies the tone sepia just produced, so the
+     armoury lands warm brown in one pass. Neither operation has an offset term,
+     so black stays black and the highlight peak is untouched — this is a hue
+     move, not the flat scrim that round 2 lost on.
+     🪧 …and the store's OTHER burnt-in sign. The 1.62 crop takes the
+     "FREEDOM FIREARMS" board off the top; a "PRO SHOP" board painted low on the
+     right survived it, sitting just above the Terms of Service link. The wash's
+     standard bottom scrim is already on the floor by then, so this hub adds its
+     own — again a gradient that reaches zero, over the bottom fifth only. */
+  --keep-scrim-extra: linear-gradient(0deg, rgba(9, 7, 5, 0.58) 0%,
+                                            rgba(9, 7, 5, 0.46) 11%,
+                                            rgba(9, 7, 5, 0) 21%);
+}
+/* THE CAMP deliberately shares CampHeights.png with the main menu, and that is
+   the right call rather than an oversight: this hub IS Camp Heights — the
+   painting is a labelled gate onto the camp, and no other plate in either
+   library depicts it. §3's "each hub keeps its own painted background" is
+   satisfied in spirit; what it forbids is six hubs sharing one anonymous
+   plate, not a hub using the picture of itself.
+   The zoom is for the same reason as Forge's: the painting has the MYTHIC
+   SPELLBOOK wordmark burnt into its top-left corner, which landed beside the
+   breadcrumb tabs and read as a second, broken logo. */
+.spellbook-hub.is-sub[data-hub="field"] {
+  --keep-bg-filter: brightness(0.78) saturate(0.72) contrast(1.05) sepia(0.14);
+  --keep-bg-zoom: 1.34;
+  /* 🪧 "CAMP HEIGHTS" IS PAINTED ON THE FENCE, and no crop can reach it: the
+     plate is 1280x720, exactly the frame's aspect, so `object-fit:cover` has
+     87px of vertical slack to give and nothing else. Cropping the sign out with
+     `--keep-bg-zoom` alone needs ~1.9x, which throws the whole camp away to
+     lose one board. At round 2's brightness(.62) the sign was simply too dark
+     to read; at .78 it is a second white headline sitting directly under
+     "THE CAMP", which is worse than a dim plate.
+     So this hub gets its own top-band scrim. It peaks over the sign (y260-360)
+     and is on the floor by 46%, so everything below — the camp itself, which is
+     the reason this plate was chosen — keeps its own contrast. */
+  --keep-scrim-extra: linear-gradient(180deg, rgba(9, 7, 5, 0.26) 0%,
+                                              rgba(9, 7, 5, 0.54) 27%,
+                                              rgba(9, 7, 5, 0.48) 37%,
+                                              rgba(9, 7, 5, 0) 47%);
+}
+
+/* ── THE WASH — ONE RECIPE, ALL SIX HUBS ──────────────────────────────────
+   FOUR layers, topmost first. There were five.
+
+   🐛 THE FLAT VEIL — the round-2 defect, and worth the paragraph because the
+      instinct that produced it is a good one and still wrong.
+      Layer 4 used to be `linear-gradient(0deg, rgba(30,20,10,.26), rgba(30,20,10,.26))`
+      — a warm scrim at .26 over EVERY pixel of the frame. It was bought to make
+      six very different plates land on one warm ground without six hand-tuned
+      exposures, and it did do that: measured R-B came out near the comp's +4 on
+      all six. But a constant-alpha layer is an affine compression of the whole
+      range toward its own colour: it lifts the blacks and clips the highlights
+      in the same stroke. On identical patches against comp-hub.png our MEAN was
+      equal or higher while our PEAKS were 30-40% lower — x1700,y300 comp
+      (6.8,5.1,3.6) peak R 92 vs ours (11.9,8.5,5.2) peak R 72. Matching means
+      with collapsed peaks is exactly the look of a photo behind frosted glass,
+      which is what the whole background read as: a uniform brown fog where the
+      comp reads as a painted armoured figure with real form.
+      EVERY layer in the comp's wash reaches alpha 0 somewhere. Its radial is
+      `rgba(11,9,6,0)` at the centre, so the middle of the frame — where the
+      painting's subject is — is never veiled at all and keeps its own contrast;
+      only the corners darken. That is the rule this file now follows: warmth is
+      carried by the STOP COLOURS of gradients that still reach zero, never by a
+      constant layer. The radial and the base gradient below keep the comp's
+      exact geometry and alphas and only shift hue warmer (rgba(11,9,6,·) →
+      rgba(20,13,7,·)), so the ground is warm and the plate's own dynamic range
+      survives through the middle of the frame.
+      Do not re-add a flat layer here. If a hub still reads cold, warm the PLATE
+      with `sepia()` — the exposure block above says why that is contrast-safe
+      and a scrim is not.
+
+   1 TOP SCRIM. Round 1's faded to zero alpha by 30% of the viewport, which on
+     the 993px viewport this renders at is 298px — ABOVE the title block. The
+     72px title sits at y75-150 and the sub-caps and diamond rule at y180-215,
+     so the two quietest pieces of type on the page were left at the mercy of
+     whatever the painting happened to be doing there: measured across the six
+     hubs the title band ran 3.9 (Codex) to 23.4 (Arcanum) against the comp's
+     12.7, with a peak highlight of 229 on one plate against the comp's 60.
+     This one covers the whole title block and lands on a floor, so the type
+     has the same ground under it on every hub.
+     It is deliberately TIGHT. Round 2's ran to alpha 0 at 54% of the viewport —
+     536px on the 993px viewport this renders at — so it was still ~.36 opaque at
+     y300, halfway down the frame and a long way below anything it was bought to
+     protect. Measured there against the comp: peak red 36 against 58. The title
+     block ends at y215 (22%), so this one is on the floor by 27% and the painting
+     below it is untouched.
+   2 BOTTOM SCRIM — the same job for the Terms of Service link.
+   3 VIGNETTE — the comp's, unchanged.
+   4 THE COMP'S OWN BASE GRADIENT, warmed in its stop colours only (see the bug
+     note above): same geometry, same alphas, hue shifted. */
+.spellbook-hub.is-sub .spellbook-hub-bg::before {
+  z-index: 2;     /* above the plate AND the silhouettes — see the note in C2 */
+  background:
+    /* 0 PER-HUB TOP-BAND BOOST, opt-in, `none` on five of six hubs. Some plates
+       carry burnt-in painted TEXT that a crop cannot reach — see The Camp. This
+       is still a gradient that reaches alpha 0, so it darkens a band and leaves
+       the rest of the frame's contrast alone; it is not the flat veil. */
+    var(--keep-scrim-extra, none),
+    linear-gradient(180deg, rgba(9, 7, 5, 0.64) 0%, rgba(9, 7, 5, 0.52) 14%,
+                            rgba(9, 7, 5, 0.34) 20%, rgba(9, 7, 5, 0.12) 24%,
+                            rgba(9, 7, 5, 0) 27%),
+    linear-gradient(0deg,   rgba(9, 7, 5, 0.66) 0%, rgba(9, 7, 5, 0.34) 9%,
+                            rgba(9, 7, 5, 0.08) 17%, rgba(9, 7, 5, 0) 24%),
+    radial-gradient(140% 108% at 50% 38%, rgba(20, 13, 7, 0) 0%, rgba(20, 13, 7, 0.22) 62%, rgba(12, 8, 4, 0.58) 100%),
+    linear-gradient(180deg, rgba(26, 19, 11, 0.52) 0%, rgba(20, 14, 8, 0.16) 30%, rgba(16, 11, 6, 0.30) 72%, rgba(16, 11, 6, 0.44) 100%);
+}
+
+/* ── THE FOREGROUND PLATE (§3 "painted art", comp-hub.html:365-367) ────────
+   The comp's background is not one flat photo: it bleeds two heavily darkened
+   silhouettes off the bottom corners — armoured debris bottom-left, the
+   armoured turtle bottom-right — so the plate has a foreground and a distance.
+   Ours was a single flat photo behind a scrim, which is a visibly shallower
+   picture. These two `<i>` layers restore it.
+
+   ⚠ NO NEW ART. Both are existing files in `public/assets/artwork/`, the same
+     two the comp itself points at. A hub that does not set the two custom
+     properties paints nothing at all — `background-image` falls back to `none`
+     and the element is invisible — so this costs nothing on hubs where a
+     silhouette would be wrong.
+   The masks are the comp's: the art fades out upward so it reads as painted
+   INTO the plate rather than pasted on top of it. */
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg {
+  position: absolute;
+  bottom: 0;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-position: bottom center;
+  background-size: contain;
+  z-index: 1;     /* over the plate, under the wash — the comp's order */
+}
+/* 🐛 THE BOX THAT ATE THE FIGURE. The comp's silhouettes are <img> elements
+   given a WIDTH ONLY (`.bg-spears{width:640px}`) — the intrinsic aspect then
+   sets the height, and `Sparta Spartan.png` is 640x960, so the armoured figure
+   and its tripod stand 960px tall and fill the comp's whole left third.
+   Ours are CSS background-images, which have no intrinsic sizing: the box needs
+   an explicit height, round 1 guessed 620px, and `background-size:contain`
+   dutifully shrank a 2:3 painting into a 640x620 box — the figure came out
+   ~413px wide, anchored to the bottom, leaving the left third of every Battle
+   Hall render empty. Measured against the comp at x40,y300: peak red 36 vs 58,
+   the whole difference being that the comp has a painted figure there and we
+   had bare plate.
+   The heights below are the files' own aspect at the comp's width — Spartan
+   640x960, turtle 1280x853 at width 760 → 507. If either file is ever replaced,
+   these two numbers must be recomputed or the art silently rescales again. */
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-l {
+  left: -150px;
+  bottom: -90px;
+  width: 640px;
+  height: 960px;   /* 640x960 intrinsic — see above */
+  transform: rotate(-7deg);
+  background-image: var(--keep-fg-l, none);
+  /* The comp's own exposure, to the digit. */
+  filter: brightness(0.50) saturate(0.38) contrast(1.10);
+  opacity: 0.85;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 58%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 58%, transparent 100%);
+}
+.spellbook-hub.is-sub .spellbook-hub-bg .keep-fg-r {
+  right: -40px;
+  bottom: -34px;
+  width: 760px;
+  height: 507px;   /* 1280x853 intrinsic at 760 wide — see above */
+  background-image: var(--keep-fg-r, none);
+  filter: brightness(0.74) saturate(0.62) contrast(1.05) drop-shadow(0 20px 40px #000);
+  opacity: 0.95;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 62%, rgba(0, 0, 0, 0.45) 88%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 62%, rgba(0, 0, 0, 0.45) 88%, transparent 100%);
+}
+/* Battle Hall is the hub the comp itself draws, so it gets the comp's own two
+   silhouettes on the comp's own plate. The other five stay flat rather than
+   have a creature invented for them. */
+.spellbook-hub.is-sub[data-hub="battle"] {
+  --keep-fg-l: url("../../assets/artwork/Sparta%20Spartan.png");
+  --keep-fg-r: url("../../assets/artwork/10000%20turtle.png");
+}
+.spellbook-hub.is-sub .spellbook-hub-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;     /* the grain is the last thing over the plate */
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image:
+    repeating-linear-gradient(0deg,  rgba(255, 255, 255, 0.5) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.5) 0 1px, transparent 1px 3px);
+}
+/* The embers and smoke stay — they are the app's own weather — but at this
+   luminance they are a suggestion, not a particle demo. */
+.spellbook-hub.is-sub .spellbook-embers { opacity: 0.30; }
+.spellbook-hub.is-sub .spellbook-smoke  { opacity: 0.55; }
+
+/* ── C3 · TOP BAR (§3) ────────────────────────────────────────────────────
+   Left: two tab plaques. Right: the player group + the speaker pod. */
+.spellbook-hub.is-sub .keep-topbar {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
+  min-height: 48px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.keep-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── C4 · THE PLAYER GROUP ────────────────────────────────────────────────
+   Comp B's right-hand group: ONE plaque holding name · caret · rank · star ·
+   coin · gem, split by 1px gold vrules, with the music toggle as its own
+   square glyph plaque beside it.
+
+   `.keep-hud` is the positioned wrapper. It carries the coordinates the
+   legacy `.hub-currency-rail` used to carry itself, because the rail is now a
+   child and has to sit in normal flow inside the pod.
+
+   ⚠ `_hubCurrencyRailHtml()` is shared with the Master-Duel fallback menu
+     (`#md-stage`), which also relied on the rail being absolutely positioned.
+     Hence the base rule here is NOT scoped to the sub-hub, and `#md-stage`
+     gets its stacking order back three rules down.
+   ────────────────────────────────────────────────────────────────────────── */
+.keep-hud {
+  position: absolute;
+  top: 1.4rem;
+  right: 1.8rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#md-stage .keep-hud { z-index: 30; }
+/* Inside the sub-hub top bar it is just the right-hand end of a flex row. */
+.spellbook-hub.is-sub .keep-topbar .keep-hud {
+  position: static;
+  z-index: auto;
+}
+.keep-hud .hub-currency-rail {
+  position: static;
+  top: auto;
+  right: auto;
+  align-items: stretch;
+}
+/* The rail IS the plaque — same two-layer gold frame as `.keep-tab`, so the
+   group and the tabs opposite it are cut from one piece of metal (Comp B).
+
+   ⚠ THE `:not(#keep-none)` — read before "tidying" it away. hub-chrome.css
+     declares this same pod as `html body .hub-currency-rail:not(#hc-never)`,
+     specificity (1,2,1), and it is linked AFTER this file. A plain
+     `.keep-hud .hub-currency-rail` (0,2,0) loses every tie. `:not(#id)` scores
+     as an id without matching anything, which lifts these rules to (1,3,1) —
+     enough to win, without a single `!important`. `#keep-none` is a sentinel:
+     it does not exist and must never be used as a real id.
+     hub-chrome's `gap:0 !important` still wins, and that is the value we want
+     anyway; its pill-level colour rules are untouched and still apply. */
+html body .keep-hud .hub-currency-rail:not(#keep-none) {
+  position: relative;
+  isolation: isolate;
+  gap: 0;
+  /* ⚠ THE HEIGHT IS EXPLICIT AND IT IS THE POINT. The top bar is THREE plaques
+     — two `.keep-tab` breadcrumbs on the left, this player pod and the music
+     glyph on the right — and comp-hub.html cuts all three from one piece of
+     metal: `.tab{height:44px}` over a 42px `.tab-in` (:123/:129), `.plaque`
+     620x44 over a 42px `.plaque-in` (:200), `.glyph-btn` 44x44 (:178).
+     Round 1 let this pod take its height from its pill content and it landed
+     at 39.5px beside two 44px tabs and a 44px square — measured, not guessed —
+     so the group read as a lightweight status line floating between plaques
+     instead of the third plaque in the row. Height goes here, never on the
+     pills: `_hubCurrencyRailHtml()` emits a different NUMBER of pills
+     depending on sign-in state, rank and sync errors, and a content-derived
+     height changes with them. 44 outer / 42 inner face, always. */
+  height: 44px;
+  box-sizing: border-box;
+  align-items: stretch;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 0;
+  clip-path: var(--keep-oct-10);
+  background: linear-gradient(180deg, rgba(200, 168, 105, 0.55), rgba(138, 111, 60, 0.30));
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+          backdrop-filter: none;
+  filter: var(--keep-drop);
+  font-family: var(--keep-cinzel);
+}
+html body .keep-hud .hub-currency-rail:not(#keep-none)::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  clip-path: var(--keep-oct-9);
+  background: linear-gradient(180deg, #171208 0%, #0c0906 100%);
+  box-shadow: var(--keep-emboss), var(--keep-liner);
+  pointer-events: none;
+}
+.keep-hud .hub-currency-rail .hub-cur-pill {
+  border: 0;
+  border-radius: 0;
+  clip-path: none;
+  background: none;
+  box-shadow: none;
+  /* The pills fill the 42px face; they do not define it. See the height note
+     on the pod above. */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+/* The 1px gold vrules between value groups (§3). Stopping short top and bottom
+   is what keeps the row from reading like a table. */
+.keep-hud .hub-currency-rail .hub-cur-pill + .hub-cur-pill::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 24%;
+  bottom: 24%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(138, 111, 60, 0.62), transparent);
+  pointer-events: none;
+}
+.keep-hud .hub-currency-rail .hub-cur-pill { position: relative; }
+/* The player name is the loudest thing in the group, in Comp A and Comp B
+   alike — comp-hub.html `.pname` is 17px/700 at ls .10em in highlight gold.
+   ⚠ `!important` is not decoration here. hub-chrome.css owns the INSIDE of this
+     pod (its §3, ~line 619) and sets `font-size:.9rem !important` on every
+     segment, which is right for the value segments and wrong for the name. An
+     important declaration is only beaten by another important declaration, so
+     this is the only way to give one segment its own weight without reaching
+     into hub-chrome's file. Coordinated, not duplicated: everything else about
+     the segments still comes from there. */
+html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none) {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.10em !important;
+  color: var(--keep-gold-hi) !important;
+}
+html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none):hover {
+  color: #f7e6b8 !important;
+}
+/* The cloud mark is line art in the same gold as the speaker glyph beside it.
+   It used to be the `☁` emoji, which Chromium paints as a filled light-BLUE
+   cloud — the only cold mark anywhere in the shell, sitting at the leftmost,
+   most prominent position of the pod. §1 allows one gold family in menu
+   chrome. The markup now ships an inline SVG (`_hubCurrencyRailHtml()`); this
+   is what colours it. */
+/* ⚠ THE LEGACY COLOURS THAT HAD TO BE BEATEN. index.html:25885-25886 paints
+   this one glyph `#b9c9e8` signed-out and `#9ddba0` signed-in — a cold blue
+   cloud and a green one. Swapping the emoji for line art was only half the
+   job; without these two lines the SVG inherits the same cold colour through
+   `currentColor` and the pod still carries the only non-gold mark in the
+   shell, at its leftmost and most prominent position. `inherit` puts it back
+   on the pill's own gold. */
+.keep-hud .hub-currency-rail .hub-cur-pill-cloud .rail-glyph,
+.keep-hud .hub-currency-rail .hub-cur-pill-cloud.signed-in .rail-glyph {
+  color: inherit;
+}
+.keep-hud .hub-currency-rail .rail-glyph .keep-inline-glyph {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  display: block;
+}
+.keep-hud .hub-currency-rail .rail-sub { color: var(--keep-gold-grey); }
+
+/* THE LEVEL MARK. The rail's own markup now ships a stroked shield SVG instead
+   of `getLevelIcon()`'s raster (index.html, `_hubCurrencyRailHtml()`), so this
+   only has to size it — `.keep-inline-glyph` above already gives it the stroke,
+   the gold and the join.
+   ⚠ THE `!important` BELOW IS NOT DECORATION. `getLevelIcon()` writes an INLINE
+     `style="…filter:drop-shadow(…)"` onto its <img>, and an inline declaration
+     beats any stylesheet rule that is not important. If that helper is ever put
+     back on this pod — or reaches it through another call site — this is the
+     only thing that stops a red-and-silver heraldic sprite from being the one
+     colour mark in an otherwise monochrome-gold plaque. grayscale FIRST so the
+     red is gone rather than merely muted, then sepia + saturate + a small
+     negative hue rotation to land on --keep-gold instead of sepia's browner
+     default; the drop-shadow is carried over so nothing is lost. */
+.keep-hud .hub-currency-rail .acc-pill-level { display: flex; align-items: center; gap: 0.3rem; }
+.keep-hud .hub-currency-rail .acc-pill-level .keep-inline-glyph { width: 15px; height: 15px; }
+html body .keep-hud .hub-currency-rail .acc-pill-level img {
+  filter: grayscale(1) sepia(0.55) saturate(1.6) hue-rotate(-8deg) brightness(1.05)
+          drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7)) !important;
+}
+
+
+/* THE ACCOUNT XP METER. Round 1 left this as hub-chrome's bare 1px outline,
+   and at 0 XP — which is every signed-out player, i.e. every first impression —
+   the fill has zero width and the whole thing reads as an undressed hairline
+   dropped inside a finished plaque. It is dressed here as a carved slot out of
+   the same tokens as everything else: a dark well with the standard liner, a
+   1px gold hairline, the octagonal cut at the smallest size, and an inner top
+   highlight. Empty, it now reads as a deliberate empty gauge. */
+html body .keep-hud .hub-currency-rail .acc-pill-bar:not(#keep-none) {
+  position: relative;
+  width: 46px;
+  height: 10px;
+  /* 3px, not 6px — a 6px cut on a box this short self-intersects. See the note
+     on --keep-oct-3. The slot must read as closed on all eight edges. */
+  clip-path: var(--keep-oct-3);
+  border: 0 !important;
+  /* ONE half-way tick in the well, not three. Three quarter-ticks turned the
+     slot into a four-cell tray and read as an empty inventory strip; one tick
+     reads as the midpoint of a meter, which is what it is. It lives UNDER the
+     fill, so it is only ever visible in the part of the gauge that is empty. */
+  background:
+    linear-gradient(90deg, transparent 0 calc(50% - 1px), rgba(138, 111, 60, 0.26) calc(50% - 1px) 50%,
+                           transparent 50% 100%),
+    linear-gradient(180deg, #0a0806 0%, #14100a 100%) !important;
+  box-shadow: inset 0 0 0 1px rgba(138, 111, 60, 0.55),
+              inset 0 1px 0 rgba(246, 220, 149, 0.10),
+              inset 0 0 6px rgba(0, 0, 0, 0.9) !important;
+}
+html body .keep-hud .hub-currency-rail .acc-pill-bar-fill:not(#keep-none) {
+  /* A 3px floor so a zero-XP account still shows a lit head at the left edge —
+     a gauge at rest, not a gauge that failed to render. Below 3px the glow
+     below is wider than the thing glowing and it reads as a smudge. */
+  min-width: 3px;
+  background: linear-gradient(180deg, var(--keep-gold-hi-2) 0%, #c9a45a 46%, #a67f3c 100%) !important;
+  box-shadow: 0 0 7px rgba(232, 200, 119, 0.55) !important;
+}
+
+/* ── C5 · TITLE BLOCK (§3) ────────────────────────────────────────────────
+   72px gold Cinzel caps at ls .12em with a warm glow and a hard dark shadow;
+   letterspaced gold-grey sub-caps under it; then the 560px gold rule with the
+   centred diamond. */
+.spellbook-hub.is-sub .hub-banner {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 4;
+  text-align: center;
+  margin: 14px auto 0;
+  padding: 0;
+}
+.spellbook-hub.is-sub .hub-title {
+  margin: 0;
+  font-family: var(--keep-cinzel);
+  font-size: clamp(34px, 4.6vw, 72px);
+  line-height: 1.0;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+  text-transform: uppercase;
+  /* stamped metal — see B2. The `text-shadow:none` is the load-bearing half:
+     the legacy rule sets one, and Chromium would paint it over the fill. */
+  background: linear-gradient(180deg, #f9edcb 0%, #eccd83 42%, #c9a45a 74%, #a67f3c 100%);
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.85)) drop-shadow(0 0 30px rgba(232, 200, 119, 0.30));
+}
+.spellbook-hub.is-sub .hub-subtitle {
+  margin: 14px 0 0;
+  font-family: var(--keep-cinzel);
+  font-style: normal;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.36em;
+  text-indent: 0.36em;
+  text-transform: uppercase;
+  color: var(--keep-gold-grey);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.75);
+}
+
+/* ── C6 · TILE BAND — placement only ──────────────────────────────────────
+   A plain centred wrap. Tile chrome and any real grid decision belong to
+   hub-tiles.css; this exists so a hub is never an unlaid-out pile. */
+.spellbook-hub.is-sub .hub-portal-grid {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 22px;
+  width: min(1300px, 96vw);
+  max-width: none;
+  margin: 22px auto 0;
+  padding: 0;
+}
+
+/* FILL THE FRAME ON THE SPARSE HUBS.
+   Forge, The Codex and The Camp carry ONE row of tiles. With the band pinned
+   under the title and the footer's `margin-top:auto` shoving itself to the
+   floor, those three ran title → one row → ~450px of dead plate → Terms of
+   Service. Top-heavy; the comp fills its frame. Letting the band absorb the
+   leftover column space and sit centred in it gives the same three-part
+   composition on every hub: title at the top, tiles in the middle, the link on
+   the floor.
+
+   ⚠ WHY THE SELECTOR IS SHAPED LIKE THIS, and why it is only two properties.
+     The tile band belongs to hub-tiles.css, which declares it as
+     `.spellbook-hub.is-sub.hub-v2 .hub-portal-grid` (0,4,0) and is linked
+     AFTER this file — so the shell's own (0,3,0) rule above never applied, and
+     an equal-specificity copy would lose the tie too. `:not(#keep-none)` scores
+     as an id without matching anything, lifting this to (1,4,0). It touches
+     the two properties that are a PAGE decision — how the band sits in the
+     column — and nothing about tile size, gap, wrap point or width, all of
+     which stay hub-tiles'.
+   ⚠ SAFE ON THE TALL HUBS. Ruin Exchange runs four rows past the fold. There
+     the band's content is already taller than the free space, `flex-grow` has
+     nothing to hand it, `align-content` has nothing to distribute, and the
+     layout is byte-identical to what it was. Verified by render, not by
+     reasoning. */
+.spellbook-hub.is-sub.hub-v2:not(#keep-none) .hub-portal-grid {
+  flex: 1 1 auto;
+  align-content: center;
+}
+
+/* ── C7 · BOTTOM (§3) ─────────────────────────────────────────────────────
+   "A small underlined gold-grey Terms of Service link, centred." Just that:
+   the legacy `◇ ⚔ ◇` sigil is decorative and the comp has no room for it.
+   The markup keeps it, so nothing is lost if a later comp wants it back. */
+.spellbook-hub.is-sub .hub-game-footer {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 14px 0 14px;
+  gap: 0;
+}
+.spellbook-hub.is-sub .hub-footer-sigil { display: none; }
+.spellbook-hub.is-sub .tos-link-btn {
+  font-family: var(--keep-cinzel);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--keep-gold-grey);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(154, 141, 108, 0.55);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
+  transition: color var(--keep-fast) var(--keep-ease);
+}
+.spellbook-hub.is-sub .tos-link-btn:hover {
+  color: var(--keep-gold-hi);
+  text-decoration-color: rgba(232, 200, 119, 0.7);
+}
+.spellbook-hub.is-sub .tos-link-btn:active { color: var(--keep-gold); }
+.spellbook-hub.is-sub .tos-link-btn:focus-visible {
+  outline: 2px solid var(--keep-gold-hi);
+  outline-offset: 3px;
+}
+.spellbook-hub.is-sub .tos-link-btn:focus:not(:focus-visible) { outline: none; }
+
+/* ── C8 · THE AMBIENT SIDE CHARACTER ──────────────────────────────────────
+   `.hub-side-hero` stays (markup and element untouched) but its aura is
+   re-toned from the Master-Duel violet to warm gold — purple is an accent in
+   §1, not a light source. */
+.spellbook-hub.is-sub .hub-side-hero { opacity: 0.62; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   D · RESPONSIVE
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 1100px) {
+  .spellbook-hub.is-sub { padding: 16px 20px 0; }
+  .spellbook-hub.is-sub .keep-topbar { flex-wrap: wrap; gap: 10px; }
+  .keep-rule { width: 420px; }
+}
+@media (max-width: 900px) {
+  .keep-hud { top: 0.7rem; right: 0.7rem; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 82vw; }
+  .keep-tab { height: 38px; padding: 0 15px; font-size: 13px; letter-spacing: 0.09em; }
+  .keep-glyph-btn { width: 38px; height: 38px; }
+  /* THE DOUBLED HAIRLINE. Below 900px hub-chrome.css breaks the pod up — each
+     segment becomes its own small plaque with its own 1px gold frame, because
+     a wrapped row cannot share one frame without the vrules landing in
+     nonsense places. But the POD kept its frame too, so every segment showed
+     the pod's hairline and then its own a pixel away: two parallel gold lines
+     between each value group, correct at 1920 and doubled at 900.
+     Once the segments are plaques the pod must stop being one. */
+  html body .keep-hud .hub-currency-rail:not(#keep-none) {
+    height: auto;
+    padding: 0;
+    clip-path: none;
+    background: none;
+    filter: none;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  html body .keep-hud .hub-currency-rail:not(#keep-none)::before { display: none; }
+  html body .keep-hud .hub-currency-rail #hub-cloud-pill:not(#keep-none) { font-size: 0.82rem !important; }
+  .spellbook-hub.is-sub .hub-subtitle { letter-spacing: 0.24em; text-indent: 0.24em; font-size: 12px; }
+}
+@media (max-width: 680px) {
+  #md-stage .keep-hud { top: 0.6rem; right: 0.6rem; }
+  .keep-rule { display: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   E · REDUCED MOTION (§4) — "drops to a plain opacity change". Nothing here
+   animates position, so the honest reading is: drop the transitions.
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .keep-tab,
+  .keep-tab::before,
+  .keep-tab .keep-tab-arrow,
+  .keep-glyph-btn,
+  .keep-glyph,
+  .spellbook-hub.is-sub .tos-link-btn {
+    transition: none;
+  }
+  .spellbook-hub.is-sub .spellbook-embers span { animation: none; opacity: 0.25; }
+  html body .keep-hud .hub-currency-rail .acc-pill-bar-fill:not(#keep-none) { transition: none; }
+}

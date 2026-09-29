@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Supply Chain · modal harness</title>
+<!-- The harness for public/src/supplychain/modal.js. Served by tools/supplychain/serve.mjs
+     at /__sc/harness-modal.html. Query string:
+       ?id=medical            which tile to open (default medical; any graph node id)
+       ?owns=mining,transport ?held=some|none|all ?gems=poor|mid|rich ?admin=1 ?phase=2
+       ?scbridge=full|none|half|throw|reject|junk   (fake-bridge personas)
+       ?hover=1               ALSO mount hover.js over the tile buttons, so the two
+                              views can be driven together (the round-4 critic could
+                              not: no page had ever held both at once). The hover card
+                              must never survive the modal opening over it.
+       ?nofonts=1             skip Google Fonts (offline runs)
+     window.__scModal = { open(id), vm, hosts(), close(), ids } for a driver script.
+     fake-bridge.js is a classic script and MUST stay above the module tag. -->
+<script src="/__sc/fake-bridge.js"></script>
+<link id="fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Rajdhani:wght@500;600;700&display=swap">
+<style>
+  :root { --bg-deep:#0c0b0a; --bg-panel:#17150f; --bg-card:#1c1813; --gold:#d4af37; --gold-bright:#f5d76e; --ink:#e8e0d0; --ink-dim:#a89888; color-scheme: dark; }
+  html, body { margin: 0; background: var(--bg-deep); color: var(--ink); font-family: 'Crimson Text', Georgia, serif; }
+  /* a stand-in for the map so the backdrop has something to dim */
+  #stage { min-height: 100vh; padding: 16px; background: radial-gradient(ellipse at 50% 40%, #241f16 0, #0c0b0a 70%); }
+  #stage h1 { font-family: Cinzel, serif; color: var(--gold-bright); letter-spacing: .08em; font-size: 18px; margin: 0 0 10px; }
+  #nav { display: flex; flex-wrap: wrap; gap: 6px; }
+  #nav button { font: inherit; font-size: 13px; background: transparent; color: var(--gold-bright); border: 1px solid rgba(198,160,74,.34); border-radius: 3px; padding: 4px 8px; cursor: pointer; }
+  #sc-overlay { position: fixed; inset: 0; z-index: 2147483400; pointer-events: none; color-scheme: dark; }
+  #sc-overlay > * { pointer-events: auto; }
+  #log { font-size: 12px; color: var(--ink-dim); margin-top: 12px; white-space: pre-wrap; }
+</style>
+<div id="stage">
+  <h1>Supply Chain — modal harness</h1>
+  <div id="nav"></div>
+  <div id="log"></div>
+</div>
+<div id="sc-overlay"></div>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  if (q.get('nofonts') === '1') document.getElementById('fonts').remove();
+  const log = (m) => { const el = document.getElementById('log'); el.textContent += m + '\n'; };
+  const state = { vm: null, err: null, log: [] };
+  window.__scModal = state;
+  try {
+    const [{ getData, assemble }, bridge, modal] = await Promise.all([
+      import('/src/supplychain/data.js'),
+      import('/src/supplychain/sc.bridge.js'),
+      import('/src/supplychain/modal.js'),
+    ]);
+    // the shell's path: live catalogue rows + the session's shipping facts; snapshot when there is no bridge
+    const shipping = await import('/src/supplychain/shipping.js');
+    const data = bridge.ready() ? assemble({ liveCatalog: bridge.resources(), ctx: typeof shipping.sessionCtx === 'function' ? shipping.sessionCtx(bridge) : undefined }) : getData();
+    const ids = data.graph.nodes.map((n) => n.id);
+    const opts = () => ({
+      opEcon: bridge.opEcon, opLabel: bridge.opLabel, held: bridge.held, owns: bridge.ownsOp,
+      gems: bridge.ready() ? bridge.gems() : null, transportPhase: bridge.transportPhase,
+      admin: bridge.isAdmin(), signedIn: bridge.signedIn(), proposal: true,
+    });
+    const cb = {
+      onNavigate: (id) => { state.log.push('nav:' + id); open(id); },
+      onHighlight: (id) => { state.log.push('highlight:' + id); log('highlight ' + id); },
+      onOpen: (id) => { state.log.push('open:' + id); log('openBusiness ' + id + ' -> ' + bridge.openBusiness(id)); },
+      onCopyProposal: (id) => { state.log.push('copy:' + id); log('copy proposal ' + id); },
+      onClose: () => { state.log.push('close'); },
+    };
+    function open(id) {
+      const t0 = performance.now();
+      state.vm = modal.modalVM(id, data, opts());
+      modal.openModal(document.getElementById('sc-overlay'), state.vm, cb);
+      state.lastMs = performance.now() - t0;
+      history.replaceState(null, '', '?' + new URLSearchParams(Object.assign(Object.fromEntries(q), { id })).toString());
+    }
+    Object.assign(state, { open, close: modal.closeModal, ids, hosts: () => document.querySelectorAll('[data-sc-modal]').length, isOpen: modal.isModalOpen, data, modalVM: (id) => modal.modalVM(id, data, opts()) });
+    const nav = document.getElementById('nav');
+    for (const id of ids) { const b = document.createElement('button'); b.textContent = id; b.onclick = () => open(id); nav.appendChild(b); }
+    /* The hover+modal SEAM. Opt-in so the modal suites stay a modal-only page.
+       The pair matters because in the shipped shell a pointer hovers a tile and
+       THEN clicks it: the hover card must be gone by the time the modal paints,
+       and the modal must own the focus afterwards. */
+    if (q.get('hover') === '1') {
+      const { hoverVM, mountHover } = await import('/src/supplychain/hover.js');
+      const hv = mountHover(document.getElementById('sc-overlay'));
+      const vms = {}; for (const id of ids) vms[id] = hoverVM(id, data);
+      nav.addEventListener('pointerover', (e) => { const t = e.target.closest('button'); if (!t || !vms[t.textContent]) return;
+        const r = t.getBoundingClientRect(); hv.show(vms[t.textContent], { x: r.left + r.width / 2, y: r.bottom, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }); });
+      nav.addEventListener('pointerleave', () => hv.hide());
+      nav.addEventListener('click', () => hv.hide());
+      state.hover = { show: (id) => { const t = [...nav.children].find((x) => x.textContent === id); const r = t.getBoundingClientRect();
+          hv.show(vms[id], { x: r.left + r.width / 2, y: r.bottom, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }); },
+        hide: () => hv.hide(), cards: () => document.querySelectorAll('.sc-hover[data-on="1"]').length };
+      log('hover mounted');
+    }
+    log('bridge ready=' + bridge.ready() + ' healthy=' + bridge.healthy(['transport']) + ' persona=' + (window.__scFake && window.__scFake.mode));
+    open(q.get('id') || 'medical');
+  } catch (e) {
+    state.err = String(e && e.stack || e);
+    log('ERROR ' + state.err);
+  }
+  document.body.dataset.ready = '1';
+</script>

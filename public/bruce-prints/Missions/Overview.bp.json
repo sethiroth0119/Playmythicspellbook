@@ -1,0 +1,250 @@
+{
+ "system": "Missions",
+ "label": "Missions & Progression",
+ "icon": "🎯",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "_missionsResetIfNeeded",
+   "name": "_missionsResetIfNeeded",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58829,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "trackMission",
+   "name": "trackMission",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58858,
+   "params": [
+    "eventName",
+    "increment"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "missionCard",
+   "name": "missionCard",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 203706,
+   "params": [
+    "slot",
+    "kind"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "missionResume",
+   "name": "missionResume",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 242241,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [
+    "App.screen"
+   ],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "_rollMissionSet",
+   "name": "_rollMissionSet",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 58800,
+   "params": [
+    "catalog",
+    "count",
+    "seed"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "_missionSpec",
+   "name": "_missionSpec",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 58823,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "progress",
+   "name": "progress",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 81327,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.records",
+    "Profile.decks",
+    "Profile.heroes"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "xpForLevel",
+   "name": "xpForLevel",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 84026,
+   "params": [
+    "lvl"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "missions",
+   "name": "missions",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 242228,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "missionRun",
+   "name": "missionRun",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 242236,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.rlcRun"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "missionStart",
+   "name": "missionStart",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 242240,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "progressOf",
+   "name": "progressOf",
+   "kind": "function",
+   "file": "public/src/transport/index.js",
+   "line": 368,
+   "params": [
+    "row"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "addXp",
+   "name": "addXp",
+   "kind": "function",
+   "file": "public/src/kitchen/kitchen.state.js",
+   "line": 4425,
+   "params": [
+    "n"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "missionId",
+   "name": "missionId",
+   "kind": "pure",
+   "file": "public/src/missions/graph.js",
+   "line": 35,
+   "params": [
+    "siteId",
+    "hold",
+    "day"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1400
+  }
+ ],
+ "edges": [
+  {
+   "from": "_missionsResetIfNeeded",
+   "to": "_rollMissionSet"
+  },
+  {
+   "from": "trackMission",
+   "to": "_missionsResetIfNeeded"
+  },
+  {
+   "from": "missionCard",
+   "to": "_missionSpec"
+  }
+ ]
+}

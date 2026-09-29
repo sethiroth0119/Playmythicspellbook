@@ -1,0 +1,402 @@
+<title>Hexfield Deploy Runbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Spline+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+:root {
+  --ground: #eae7de;
+  --surface: #f4f2ec;
+  --sunken: #dedbd1;
+  --line: #cbc7ba;
+  --line-soft: #ded9cc;
+  --ink: #1c211f;
+  --ink-2: #4a534e;
+  --ink-3: #7c857f;
+  --accent: #a9701a;
+  --safe: #2f7a4c;
+  --caution: #a8621f;
+  --blocker: #a83a33;
+  --code-bg: #14181a;
+  --code-ink: #d8ded9;
+  --code-dim: #7c857f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0d1013;
+    --surface: #141a1d;
+    --sunken: #0a0d10;
+    --line: #263033;
+    --line-soft: #1c2427;
+    --ink: #d8ded9;
+    --ink-2: #96a09a;
+    --ink-3: #6b7873;
+    --accent: #e0a53c;
+    --safe: #63b37a;
+    --caution: #d98246;
+    --blocker: #cf5a52;
+    --code-bg: #080b0d;
+    --code-ink: #d8ded9;
+    --code-dim: #6b7873;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0d1013;
+  --surface: #141a1d;
+  --sunken: #0a0d10;
+  --line: #263033;
+  --line-soft: #1c2427;
+  --ink: #d8ded9;
+  --ink-2: #96a09a;
+  --ink-3: #6b7873;
+  --accent: #e0a53c;
+  --safe: #63b37a;
+  --caution: #d98246;
+  --blocker: #cf5a52;
+  --code-bg: #080b0d;
+  --code-ink: #d8ded9;
+  --code-dim: #6b7873;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Spline Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 940px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 36px) 90px; }
+
+/* ── masthead ───────────────────────────────────────── */
+header.top { border-bottom: 1px solid var(--line); background: var(--surface); }
+.top-in {
+  max-width: 940px; margin: 0 auto;
+  padding: 28px clamp(16px, 4vw, 36px) 24px;
+  display: flex; flex-wrap: wrap; gap: 18px 30px; align-items: flex-end;
+}
+.brand { flex: 1 1 320px; min-width: 0; }
+.eyebrow {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600; font-size: 12px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 5px;
+}
+h1 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 700; font-size: clamp(29px, 5vw, 42px);
+  line-height: 1.03; margin: 0; text-wrap: balance;
+}
+.sub { margin: 9px 0 0; color: var(--ink-2); max-width: 60ch; }
+.stamp {
+  border: 1px solid var(--line); background: var(--ground);
+  padding: 8px 14px 9px; min-width: 128px;
+}
+.stamp .k {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-3); display: block;
+}
+.stamp .v {
+  font-family: "JetBrains Mono", monospace; font-weight: 600;
+  font-size: 15px; line-height: 1.5; font-variant-numeric: tabular-nums;
+  color: var(--accent); word-break: break-all;
+}
+
+/* ── sections ───────────────────────────────────────── */
+section { margin-top: 42px; }
+h2 {
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600; font-size: 13px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-3);
+  margin: 0 0 16px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+p { margin: 0 0 12px; max-width: 68ch; }
+p:last-child { margin-bottom: 0; }
+
+/* ── gate ───────────────────────────────────────────── */
+.gate { display: grid; gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); }
+.gate-row {
+  background: var(--surface); padding: 13px 16px;
+  display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 4px 14px; align-items: start;
+}
+@media (max-width: 560px) { .gate-row { grid-template-columns: 1fr; } }
+.tag {
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 7px 4px; border: 1px solid var(--line);
+  color: var(--ink-2); justify-self: start; white-space: nowrap;
+}
+.tag.ok    { color: var(--safe);    border-color: color-mix(in srgb, var(--safe) 55%, transparent);    background: color-mix(in srgb, var(--safe) 10%, transparent); }
+.tag.todo  { color: var(--caution); border-color: color-mix(in srgb, var(--caution) 55%, transparent); background: color-mix(in srgb, var(--caution) 10%, transparent); }
+.tag.stop  { color: var(--blocker); border-color: color-mix(in srgb, var(--blocker) 55%, transparent); background: color-mix(in srgb, var(--blocker) 10%, transparent); }
+.gate-row .txt { font-size: 14.5px; color: var(--ink-2); }
+.gate-row .txt strong { color: var(--ink); font-weight: 600; }
+
+/* ── steps ──────────────────────────────────────────── */
+ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 26px; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px 14px; }
+ol.steps > li::before {
+  content: counter(s);
+  font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  width: 26px; height: 26px; display: grid; place-items: center; margin-top: 2px;
+}
+ol.steps h3 {
+  grid-column: 2; margin: 0;
+  font-family: "Saira Condensed", ui-sans-serif, sans-serif;
+  font-weight: 600; font-size: 20px; line-height: 1.2;
+}
+ol.steps .body { grid-column: 2; display: grid; gap: 11px; }
+
+pre {
+  margin: 0; background: var(--code-bg); color: var(--code-ink);
+  border: 1px solid var(--line-soft); padding: 13px 15px;
+  overflow-x: auto; font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.65;
+}
+pre .c { color: var(--code-dim); }
+pre .a { color: var(--accent); }
+code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.88em; background: var(--sunken);
+  padding: 1px 5px; border: 1px solid var(--line-soft); white-space: nowrap;
+}
+
+.note {
+  border-left: 2px solid var(--accent); padding: 10px 0 10px 14px;
+  color: var(--ink-2); font-size: 14.5px;
+}
+.note.warn { border-left-color: var(--blocker); }
+.note strong { color: var(--ink); font-weight: 600; }
+
+/* ── table ──────────────────────────────────────────── */
+.tw { overflow-x: auto; border: 1px solid var(--line-soft); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 520px; }
+th, td { border-bottom: 1px solid var(--line-soft); padding: 10px 14px; text-align: left; vertical-align: top; }
+thead th {
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);
+  font-weight: 600; background: var(--sunken); white-space: nowrap;
+}
+tbody td { font-size: 14px; color: var(--ink-2); }
+tbody td:first-child { color: var(--ink); font-weight: 500; }
+tbody tr:last-child td { border-bottom: 0; }
+
+ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.plain li {
+  display: grid; grid-template-columns: 15px minmax(0, 1fr); gap: 10px;
+  font-size: 14.5px; color: var(--ink-2); line-height: 1.5;
+}
+ul.plain li::before {
+  content: ""; width: 8px; height: 9px; margin-top: 7px;
+  background: var(--accent); opacity: 0.5;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+footer.foot {
+  margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line-soft);
+  font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--ink-3);
+}
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <p class="eyebrow">Deploy runbook</p>
+      <h1>Hexfield Deploy Runbook</h1>
+      <p class="sub">Getting the rebuilt battlefield onto the live game. Written to be followed top to bottom on your own machine — the build container can't deploy.</p>
+    </div>
+    <div class="stamp">
+      <span class="k">Branch</span>
+      <span class="v">claude/tactical-hex-<br>grid-battlefield-odngvz</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <h2>Before you start</h2>
+    <div class="gate">
+      <div class="gate-row">
+        <span class="tag ok">Done</span>
+        <span class="txt"><strong>Code is pushed.</strong> 21 commits ahead of <code>main</code> (which is still at <code>4dbc4f9</code>). Working tree clean, branch in sync with origin.</span>
+      </div>
+      <div class="gate-row">
+        <span class="tag ok">Done</span>
+        <span class="txt"><strong>Version knobs are already bumped</strong> to <code>v120x4</code> — all three of them, together. Don't touch them unless you change more code before deploying.</span>
+      </div>
+      <div class="gate-row">
+        <span class="tag ok">None</span>
+        <span class="txt"><strong>No database work.</strong> No new tables, no migrations, no RLS policies. The ruins, control points, scores and map seed all live in battle state and the multiplayer broadcast — nothing touches Supabase.</span>
+      </div>
+      <div class="gate-row">
+        <span class="tag ok">None</span>
+        <span class="txt"><strong>No new npm dependencies.</strong> <code>package.json</code> is byte-identical to before the work.</span>
+      </div>
+      <div class="gate-row">
+        <span class="tag stop">You</span>
+        <span class="txt"><strong>Wrangler login.</strong> The build container is not authenticated and cannot be — <code>npx wrangler whoami</code> returns "not authenticated" there. Deploy has to run from a machine where you can complete the browser login.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Deploy</h2>
+    <ol class="steps">
+
+      <li>
+        <h3>Get the branch</h3>
+        <div class="body">
+<pre><span class="c"># from your local clone</span>
+git fetch origin
+git checkout claude/tactical-hex-grid-battlefield-odngvz
+git pull</pre>
+          <p class="note">If you'd rather ship from <code>main</code>, merge first — <code>git checkout main &amp;&amp; git merge claude/tactical-hex-grid-battlefield-odngvz</code>. It fast-forwards; <code>main</code> hasn't moved since the work began. Deploying straight off the branch works too: Wrangler uploads whatever <code>public/</code> holds, it doesn't care which branch you're on.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3>Authenticate Wrangler</h3>
+        <div class="body">
+<pre>npx wrangler login
+npx wrangler whoami   <span class="c"># should name your account, not "not authenticated"</span></pre>
+        </div>
+      </li>
+
+      <li>
+        <h3>Sanity-check before uploading</h3>
+        <div class="body">
+<pre>node _synckcheck.mjs              <span class="c"># expect: ALL CLEAN</span>
+node _harness.js public/index.html <span class="c"># expect: ALL CHECKS PASSED</span></pre>
+          <p>Both were green at the last commit. Run them anyway — they take seconds and they catch a bad merge before it reaches the edge.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3>Deploy</h3>
+        <div class="body">
+<pre>npm run deploy</pre>
+          <p><code>deploy.mjs</code> minifies <code>public/index.html</code>, runs <code>npx wrangler deploy</code>, then restores your un-minified source. The restore fires even on Ctrl+C or a killed shell — but if you ever find the file minified locally, <code>git checkout -- public/index.html</code> puts it right.</p>
+          <p class="note warn"><strong>Don't trust the deploy log.</strong> It says "success" the moment Cloudflare accepts the upload, which is not the same as the edge serving it. Step 5 is the real check.</p>
+        </div>
+      </li>
+
+      <li>
+        <h3>Verify at the edge, and poll</h3>
+        <div class="body">
+<pre>curl -s "https://mythicspellbook.xyz/version.txt?cb=$(date +%s)"
+<span class="c"># expect: v120x4</span></pre>
+          <p>Propagation across points of presence takes up to a couple of minutes, so repeat this until it flips rather than concluding anything from the first call. The cache-buster matters — <code>version.txt</code> is the file the in-game update check fetches uncached, and a stale CDN copy is exactly what would fool you.</p>
+          <p>Once it reads <code>v120x4</code>, hard-reload the game. Existing players get the update prompt on their next check because the service worker's <code>CACHE_VERSION</code> changed with it.</p>
+        </div>
+      </li>
+
+    </ol>
+  </section>
+
+  <section>
+    <h2>What to look at first</h2>
+    <p>Start a battle. In rough order of "would tell you something's wrong":</p>
+    <ul class="plain">
+      <li>The board is a hex field, 14 wide by 12 deep, filling its slot — not a plate floating on a painting.</li>
+      <li><strong>W A S D</strong> pans, <strong>Q</strong> and <strong>E</strong> turn, <strong>R</strong> snaps back to the default view.</li>
+      <li>Select a unit: one continuous contour around everywhere it can reach. Hover a destination: the arrow bends around obstacles rather than cutting straight.</li>
+      <li>Walk a unit somewhere that needs a detour — the sprite should follow the arrow, not slide through the wall.</li>
+      <li>Click a unit's feet and it selects. That's the regression the final gate caught and closed; it's the one most worth spot-checking.</li>
+      <li>Move a unit onto a ruin and loot it — the salvage grid that opens is the same one tombstones use, including dragging your own loot back in to make room.</li>
+      <li>Hold two SCP trucks for three turns in a row and the match should end without anyone touching a hero.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Couldn't be tested here — worth testing live</h2>
+    <p>The final gate scored <strong>102 pass, 0 fail, 17 unverified</strong>. The 17 are unverifiable in a headless container, not skipped by choice. Each is listed with what to check in <code>.gauntlet/FUNCTION-INVENTORY.md</code>; these are the ones that matter most:</p>
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Area</th><th>Why it couldn't run here</th><th>What to check live</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Multiplayer</td>
+            <td>Needs a second client and a live Supabase session</td>
+            <td>Both players see the same terrain, the same five ruins in the same places, and the same truck positions. Enemy moves walk their real route rather than sliding.</td>
+          </tr>
+          <tr>
+            <td>Control points in MP</td>
+            <td>Same</td>
+            <td>The score ticks once per side per turn — not twice. A two-of-three win ends the match on <em>both</em> screens.</td>
+          </tr>
+          <tr>
+            <td>Replays</td>
+            <td>Recorded locally here, but not against a cloud-saved match</td>
+            <td>A replayed match rebuilds the identical battlefield, not different terrain.</td>
+          </tr>
+          <tr>
+            <td>Admin catalogue</td>
+            <td>Needs admin auth</td>
+            <td>The battlemap editor still reads and writes tiles.</td>
+          </tr>
+          <tr>
+            <td>Full roster</td>
+            <td>Only the starter deck was reachable offline</td>
+            <td>Abilities with unusual reach — anything that shoves, pulls, or hits an area — now works in six directions, not eight.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>If you need to roll back</h2>
+    <p>There's no partial state to unwind — no schema change, no data migration. Rolling back is redeploying the old front end.</p>
+<pre><span class="c"># fastest: previous deployment, from the Cloudflare dashboard</span>
+<span class="c">#   Workers &amp; Pages → playmythicspellbook → Deployments → Rollback</span>
+
+<span class="c"># or from source</span>
+git checkout main            <span class="c"># 4dbc4f9, pre-project</span>
+<span class="a">…bump all three version knobs to something NEW…</span>
+npm run deploy</pre>
+    <p class="note warn"><strong>The bump on the way back matters as much as on the way out.</strong> Roll back to <code>v120x3</code> or lower and clients already holding <code>v120x4</code> will not see a change — the update check compares against what they have. Go forward to <code>v120x5</code> even when the code goes backward. The three that must move together are <code>public/version.txt</code>, <code>window.BUILD_VERSION</code> in <code>public/index.html</code>, and <code>CACHE_VERSION</code> in <code>public/sw.js</code>.</p>
+  </section>
+
+  <section>
+    <h2>Where things live</h2>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Path</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td>public/battle-board/index.html</td><td>The canvas stage — terrain, camera, arrows, draw order, picking. Most of the visual work is here.</td></tr>
+          <tr><td>public/index.html</td><td>Game logic — the hex metric, ruins and loot, control points and victory, the HUD.</td></tr>
+          <tr><td>public/battle-board/_harness.html</td><td>Dev harness. Drives the stage over the real message protocol with ten scenes, so you can look at the board without a live session.</td></tr>
+          <tr><td>.gauntlet/README.md</td><td>How to capture the board headlessly, and what each scene is worth as evidence.</td></tr>
+          <tr><td>.gauntlet/CONTRACT.md</td><td>Architecture brief — the two layers, the message protocol, and where new work plugs in.</td></tr>
+          <tr><td>.gauntlet/HEXSPEC.md</td><td>The binding hex contract. Read this before touching coordinates.</td></tr>
+          <tr><td>.gauntlet/FUNCTION-INVENTORY.md</td><td>Every battlefield function, its verdict, and the evidence behind it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:14px">To see the board without deploying: <code>node .gauntlet/shot.mjs "/battle-board/_harness.html?scene=gamemap&amp;shot=1" out.png 1600 900</code>. The <code>gamemap</code> scene is the authoritative one — it's the only view that answers "does the real game look like this."</p>
+  </section>
+
+  <section>
+    <h2>Two things left open</h2>
+    <p>Both cosmetic, both documented, neither blocking a deploy:</p>
+    <ul class="plain">
+      <li><strong>The route ribbon isn't drawn on the receiving client.</strong> In multiplayer, an opponent's unit walks the correct bent route, but the arrow itself isn't shown to you while it happens. The walk is right; the telegraph is missing. Cause is a gate in the telegraph push that only the local AI narrator ever satisfies.</li>
+      <li><strong>Sub-pixel feathering at some unit feet.</strong> Ground rings and shadows are clipped with the body's plane rather than their own ground plane, leaving a few dozen pixels of softness at the disc rim. Invisible at 1×; measurable at high zoom.</li>
+    </ul>
+  </section>
+
+  <footer class="foot">
+    Worker: playmythicspellbook · assets from ./public · Supabase project ktsiasyjusesawtrwrjc (unchanged) · shipping v120x4
+  </footer>
+</div>

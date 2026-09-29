@@ -1,0 +1,1185 @@
+{
+ "system": "Cards",
+ "label": "Cards, Moves & Battle",
+ "icon": "🃏",
+ "print": "Detail_2",
+ "nodes": [
+  {
+   "id": "_cardRowToListing",
+   "name": "_cardRowToListing",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 62661,
+   "params": [
+    "r",
+    "me"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "cardMarketUnsubscribe",
+   "name": "cardMarketUnsubscribe",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62698,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "card",
+   "name": "card",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 68286,
+   "params": [
+    "l",
+    "v",
+    "c"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.gems"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "cardSnapshotForListing",
+   "name": "cardSnapshotForListing",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 72401,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "cardDisplayHp",
+   "name": "cardDisplayHp",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 81936,
+   "params": [
+    "card",
+    "fallback"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "_deckSleeveById",
+   "name": "_deckSleeveById",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 84670,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "moveP",
+   "name": "moveP",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 88424,
+   "params": [
+    "e"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "_cardOwnerOf",
+   "name": "_cardOwnerOf",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 104505,
+   "params": [
+    "u"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "_cardPlayLockReason",
+   "name": "_cardPlayLockReason",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 105108,
+   "params": [
+    "card",
+    "state",
+    "playingSide"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "_battleDetectionFlip",
+   "name": "_battleDetectionFlip",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 105807,
+   "params": [
+    "state",
+    "unit",
+    "radius"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "_cardDefMemoOpen",
+   "name": "_cardDefMemoOpen",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 106146,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "_cardDefMemoClose",
+   "name": "_cardDefMemoClose",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 106152,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "_battleCardArtHtml",
+   "name": "_battleCardArtHtml",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 106157,
+   "params": [
+    "cardId",
+    "icon",
+    "cls"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "_cardDefById",
+   "name": "_cardDefById",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 106181,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "_cardRefMatches",
+   "name": "_cardRefMatches",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 107482,
+   "params": [
+    "u",
+    "ref",
+    "zone"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "_cardAuraList",
+   "name": "_cardAuraList",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 107704,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "_battleAnyTrapOnField",
+   "name": "_battleAnyTrapOnField",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 114632,
+   "params": [
+    "state"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "_battleSpawnKalonAtTile",
+   "name": "_battleSpawnKalonAtTile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 114682,
+   "params": [
+    "units",
+    "kalonCard",
+    "owner",
+    "tile",
+    "canAct"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "_cardDefOfUnit",
+   "name": "_cardDefOfUnit",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 114777,
+   "params": [
+    "u"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "_battleSpawnSummonByCardId",
+   "name": "_battleSpawnSummonByCardId",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 114832,
+   "params": [
+    "state",
+    "caster",
+    "summonCardId",
+    "requestedCount"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2588
+  },
+  {
+   "id": "_cardNegateKinds",
+   "name": "_cardNegateKinds",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 116707,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2720
+  },
+  {
+   "id": "moveCam",
+   "name": "moveCam",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 127097,
+   "params": [
+    "dt"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2852
+  },
+  {
+   "id": "cardTex",
+   "name": "cardTex",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 127380,
+   "params": [
+    "color",
+    "name",
+    "level",
+    "atk",
+    "def"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2984
+  },
+  {
+   "id": "cardCanvas",
+   "name": "cardCanvas",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 127747,
+   "params": [
+    "artImg"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3116
+  },
+  {
+   "id": "deckCard",
+   "name": "deckCard",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 140254,
+   "params": [
+    "d",
+    "i"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3248
+  },
+  {
+   "id": "_cardFaceArt",
+   "name": "_cardFaceArt",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 140884,
+   "params": [
+    "card",
+    "fit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3380
+  },
+  {
+   "id": "cardFor",
+   "name": "cardFor",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 142035,
+   "params": [
+    "d"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3512
+  },
+  {
+   "id": "cardMeta",
+   "name": "cardMeta",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 146824,
+   "params": [
+    "c"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3644
+  },
+  {
+   "id": "_cardTypeOpts",
+   "name": "_cardTypeOpts",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 149663,
+   "params": [
+    "sel"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3776
+  },
+  {
+   "id": "deckOpts",
+   "name": "deckOpts",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 149876,
+   "params": [
+    "sel"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 3908
+  },
+  {
+   "id": "cardIdForSprite",
+   "name": "cardIdForSprite",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 151452,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4040
+  },
+  {
+   "id": "captureEditorIntoCard",
+   "name": "captureEditorIntoCard",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 152768,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4172
+  },
+  {
+   "id": "_battleBounceNotice",
+   "name": "_battleBounceNotice",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 159325,
+   "params": [
+    "unit",
+    "sideLabel"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4304
+  },
+  {
+   "id": "_battleIsLocked",
+   "name": "_battleIsLocked",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 161524,
+   "params": [
+    "state",
+    "side",
+    "cat"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4436
+  },
+  {
+   "id": "_battleApplyCounterLock",
+   "name": "_battleApplyCounterLock",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 161527,
+   "params": [
+    "state",
+    "card",
+    "lockedSide"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4568
+  },
+  {
+   "id": "_battleDeclineCounter",
+   "name": "_battleDeclineCounter",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 162237,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.ui"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4700
+  },
+  {
+   "id": "_cardFilterBlockHtml",
+   "name": "_cardFilterBlockHtml",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 164709,
+   "params": [
+    "prefix",
+    "flt",
+    "cardIds",
+    "opts"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4832
+  },
+  {
+   "id": "_deckSearchNext",
+   "name": "_deckSearchNext",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 165098,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.ui"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 4964
+  },
+  {
+   "id": "_battleEscListener",
+   "name": "_battleEscListener",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 169875,
+   "params": [
+    "e"
+   ],
+   "async": false,
+   "reads": [
+    "App.ui"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5096
+  },
+  {
+   "id": "cardCanTunnelNow",
+   "name": "cardCanTunnelNow",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 174797,
+   "params": [
+    "card",
+    "state",
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5228
+  },
+  {
+   "id": "_cardToGrave",
+   "name": "_cardToGrave",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 175783,
+   "params": [
+    "state",
+    "owner",
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5360
+  },
+  {
+   "id": "cardLookup",
+   "name": "cardLookup",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 183498,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "Forge.customCards"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5492
+  },
+  {
+   "id": "cardShopFetchMine",
+   "name": "cardShopFetchMine",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187687,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5624
+  },
+  {
+   "id": "cardShopBrowse",
+   "name": "cardShopBrowse",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187702,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5756
+  },
+  {
+   "id": "cardShopFetchShop",
+   "name": "cardShopFetchShop",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 187718,
+   "params": [
+    "ownerId"
+   ],
+   "async": true,
+   "reads": [
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 5888
+  },
+  {
+   "id": "cardShopMarketPrice",
+   "name": "cardShopMarketPrice",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 187747,
+   "params": [
+    "cardId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6020
+  },
+  {
+   "id": "deckSel",
+   "name": "deckSel",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 212885,
+   "params": [
+    "path",
+    "val"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6152
+  },
+  {
+   "id": "cardTile",
+   "name": "cardTile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 214455,
+   "params": [
+    "key"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6284
+  },
+  {
+   "id": "cardLevelOf",
+   "name": "cardLevelOf",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 216004,
+   "params": [
+    "c",
+    "kind"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.heroes",
+    "Profile.units"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6416
+  },
+  {
+   "id": "_cardCtxResolveId",
+   "name": "_cardCtxResolveId",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 216428,
+   "params": [
+    "v"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6548
+  },
+  {
+   "id": "_battleApplyLoadoutBonuses",
+   "name": "_battleApplyLoadoutBonuses",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 218975,
+   "params": [
+    "heroUnit",
+    "withItem"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6680
+  },
+  {
+   "id": "_battleInitHeroes",
+   "name": "_battleInitHeroes",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219018,
+   "params": [
+    "state"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6812
+  },
+  {
+   "id": "_battleHeroOnSide",
+   "name": "_battleHeroOnSide",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219048,
+   "params": [
+    "state",
+    "side"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 6944
+  },
+  {
+   "id": "_battleWithinRadius",
+   "name": "_battleWithinRadius",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219055,
+   "params": [
+    "a",
+    "b",
+    "r"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7076
+  },
+  {
+   "id": "_battleEmotionRadius",
+   "name": "_battleEmotionRadius",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219062,
+   "params": [
+    "heroUnit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7208
+  },
+  {
+   "id": "_battleSetHeroEmotion",
+   "name": "_battleSetHeroEmotion",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 219074,
+   "params": [
+    "heroUnit",
+    "emotionId",
+    "opts"
+   ],
+   "async": false,
+   "reads": [
+    "App.state"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7340
+  },
+  {
+   "id": "_battleBondTargetFor",
+   "name": "_battleBondTargetFor",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219094,
+   "params": [
+    "unit"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7472
+  },
+  {
+   "id": "_battleEmotionStatMod",
+   "name": "_battleEmotionStatMod",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219227,
+   "params": [
+    "unitId",
+    "statKey",
+    "baseValue"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7604
+  },
+  {
+   "id": "_battleBackpackLootMult",
+   "name": "_battleBackpackLootMult",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 219274,
+   "params": [
+    "heroId"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7736
+  },
+  {
+   "id": "moveMachine",
+   "name": "moveMachine",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 230742,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 7868
+  },
+  {
+   "id": "_battleEvasiveRollHit",
+   "name": "_battleEvasiveRollHit",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 233126,
+   "params": [
+    "defender"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8000
+  },
+  {
+   "id": "_battleSpawnHeroDecoy",
+   "name": "_battleSpawnHeroDecoy",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 233710,
+   "params": [
+    "state",
+    "hero"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8132
+  },
+  {
+   "id": "_cardFrameArt",
+   "name": "_cardFrameArt",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 234884,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "Forge.frameArt"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8264
+  },
+  {
+   "id": "_cardArtOnlyImg",
+   "name": "_cardArtOnlyImg",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 238781,
+   "params": [
+    "cardId",
+    "icon",
+    "cls",
+    "emojiSize"
+   ],
+   "async": false,
+   "reads": [
+    "Forge._carIds"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8396
+  },
+  {
+   "id": "_cardKitHtml",
+   "name": "_cardKitHtml",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 238883,
+   "params": [
+    "card"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8528
+  },
+  {
+   "id": "cardKeys",
+   "name": "cardKeys",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 243556,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8660
+  },
+  {
+   "id": "decks",
+   "name": "decks",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 243785,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8792
+  },
+  {
+   "id": "battleCount",
+   "name": "battleCount",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 243788,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.records"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 8924
+  },
+  {
+   "id": "cardPoolSize",
+   "name": "cardPoolSize",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 245249,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 9056
+  },
+  {
+   "id": "_deckVaultStageActive",
+   "name": "_deckVaultStageActive",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 249174,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.screen",
+    "App.deckBuilderHeroId",
+    "App.editingDeckId",
+    "App._deckCodeModal",
+    "App._deckVaultBroken"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 9188
+  }
+ ],
+ "edges": []
+}

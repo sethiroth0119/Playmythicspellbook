@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Guardian of the Rig — model test</title>
+<!-- 🔬 STANDALONE MODEL VIEWER — the Cracking Yard's character, with none of
+     the yard around it.
+     Written because the refinery cannot currently display a skinned animated
+     character and the preview browser available to the agent could not be
+     trusted to diagnose it (canvas 0×0, rAF at ~0.56 Hz — see CLAUDE.md). This
+     page runs the SAME three.js r128 + GLTFLoader the yard uses, so whatever it
+     shows is the truth about the model itself:
+       · if the character walks correctly here, the asset is fine and the fault
+         is in /src/refinery's load path;
+       · if it smears or vanishes here too, the asset or the loader pairing is
+         at fault and this page is where to fix it.
+     Not linked from anywhere in the game. Safe to delete. -->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #12161d; color: #d7dee8;
+               font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  /* ⚠ width/height ARE REQUIRED, not decorative. A <canvas> is a replaced
+     element: with width:auto it keeps its intrinsic 300×150 however far the
+     insets stretch, so `inset:0` alone leaves a postage stamp in the corner
+     and the page looks blank. */
+  #view { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
+  .panel { position: fixed; left: 12px; top: 12px; z-index: 5; max-width: min(460px, calc(100vw - 24px));
+           background: #0b0e13ee; border: 1px solid #2a3442; border-radius: 10px; padding: 12px 14px;
+           box-shadow: 0 10px 40px #0009; }
+  h1 { font: 700 13px/1.3 ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase;
+       color: #e8b84b; margin: 0 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+  button { font: 600 12px ui-monospace, monospace; color: #dbe3ee; background: #1a2130;
+           border: 1px solid #33405240; border-radius: 7px; padding: 7px 11px; cursor: pointer; }
+  button:hover { border-color: #e8b84b80; color: #fff; }
+  button.on { background: #e8b84b; color: #16110a; border-color: #e8b84b; }
+  #log { white-space: pre-wrap; margin: 10px 0 0; color: #93a1b4; font-size: 12px; max-height: 34vh; overflow: auto; }
+  .ok { color: #7fd88a; } .bad { color: #ff7b8a; } .warn { color: #ffc46b; }
+  .hint { color: #6d7a8c; margin-top: 8px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div class="panel">
+  <h1>⚒ Guardian of the Rig — model test</h1>
+  <div class="row" id="clips"></div>
+  <div class="row">
+    <button id="btn-fit">Fit view</button>
+    <button id="btn-pose">Freeze in bind pose</button>
+    <button id="btn-spin" class="on">Auto-spin</button>
+    <button id="btn-wire">Wireframe</button>
+    <button id="btn-bones">Show bones</button>
+  </div>
+  <div id="log">loading…</div>
+  <div class="hint">Drag to orbit · scroll to zoom · this page is the model only, with none of the refinery around it.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  'use strict';
+  var MODEL = new URLSearchParams(location.search).get('m') || '/models/refinery/guardian.glb';
+  var logEl = document.getElementById('log');
+  var lines = [];
+  function say(s, cls) { lines.push(cls ? '<span class="' + cls + '">' + s + '</span>' : s);
+                         logEl.innerHTML = lines.join('\n'); }
+
+  var canvas = document.getElementById('view');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x12161d);
+  var camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+  /* 🔴 POSITION THE CAMERA BEFORE OrbitControls IS CONSTRUCTED.
+     OrbitControls derives its spherical coordinates from the vector between
+     camera.position and target. Construct it while both are (0,0,0) and that
+     vector is zero: the radius is 0, the angles are undefined, and the first
+     update() writes NaN into camera.position. Nothing renders after that —
+     not the model, not even the grid — and there is no error anywhere. That
+     is exactly what the first version of this page did. */
+  camera.position.set(2.4, 1.6, 3.6);
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.9, 0);
+  controls.enableDamping = true;
+  controls.update();
+
+  scene.add(new THREE.HemisphereLight(0xdfe9ff, 0x2a2620, 1.15));
+  var key = new THREE.DirectionalLight(0xfff2dd, 1.5); key.position.set(4, 8, 5); scene.add(key);
+  var rim = new THREE.DirectionalLight(0x88aaff, 0.5); rim.position.set(-5, 3, -4); scene.add(rim);
+  scene.add(new THREE.GridHelper(10, 20, 0x3a4658, 0x232c38));
+
+  /* ⚠ SIZE FROM THE CLIENT RECT, EVERY FRAME-ISH. Sizing once from
+     innerWidth/innerHeight before layout settles is how this canvas ends up
+     0×0 and the whole page renders black with no error anywhere. */
+  function resize() {
+    var w = canvas.clientWidth || innerWidth || 1280;
+    var h = canvas.clientHeight || innerHeight || 720;
+    if (canvas.width === w && canvas.height === h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  addEventListener('resize', resize);
+
+  var mixer = null, actions = {}, current = null, skinned = null, root = null;
+  var spin = true, skelHelper = null;
+
+  say('loading ' + MODEL + ' …');
+  new THREE.GLTFLoader().load(MODEL, function (gltf) {
+    root = gltf.scene;
+    scene.add(root);
+
+    var box = new THREE.Box3().setFromObject(root);
+    var size = box.getSize(new THREE.Vector3());
+    var centre = box.getCenter(new THREE.Vector3());
+    say('loaded · ' + size.x.toFixed(3) + ' × ' + size.y.toFixed(3) + ' × ' + size.z.toFixed(3) + ' m', 'ok');
+
+    /* The file is authored tiny (armature at 0.01), so scale it up on a WRAPPER
+       for viewing. This is the same thing the yard does; if the character is
+       going to break under scaling, it breaks here too — which is the point. */
+    var target = 1.85, k = size.y > 0 ? target / size.y : 1;
+    if (Math.abs(k - 1) > 0.01) {
+      var wrap = new THREE.Group();
+      scene.remove(root); wrap.add(root); wrap.scale.setScalar(k); scene.add(wrap);
+      say('scaled ×' + k.toFixed(2) + ' to a ' + target + ' m character', 'warn');
+      box = new THREE.Box3().setFromObject(wrap);
+      size = box.getSize(new THREE.Vector3()); centre = box.getCenter(new THREE.Vector3());
+    }
+
+    root.traverse(function (n) { if (n.isSkinnedMesh) { skinned = n; n.frustumCulled = false; } });
+    say(skinned ? ('skinned mesh "' + skinned.name + '" · ' + skinned.skeleton.bones.length + ' bones') : 'NO SKINNED MESH FOUND', skinned ? 'ok' : 'bad');
+
+    if (gltf.animations.length) {
+      mixer = new THREE.AnimationMixer(root);
+      gltf.animations.forEach(function (clip) {
+        var a = mixer.clipAction(clip);
+        a.loop = THREE.LoopRepeat;
+        actions[clip.name] = a;
+      });
+      say('clips: ' + gltf.animations.map(function (c) { return c.name + ' (' + c.duration.toFixed(2) + 's)'; }).join(', '), 'ok');
+      buildClipButtons(Object.keys(actions));
+      play(Object.keys(actions)[0]);
+    } else {
+      say('no animation clips in this file', 'bad');
+    }
+
+    // Frame it
+    /* 📏 FRAME ON THE ANIMATED POSE, NOT THE BIND POSE.
+       A skinned mesh's bounding box is computed from the bind pose, so framing
+       on it puts the camera inside a character whose clips move well outside
+       it. Step the mixer through the first clip and take the union of the
+       boxes, which is what the viewer must actually fit — and which is also
+       the number that tells us whether the animated model is a different SIZE
+       from the bind pose rather than merely a different shape. */
+    var animBox = box.clone();
+    if (mixer && current == null) { /* set below */ }
+    if (mixer) {
+      var first = Object.keys(actions)[0];
+      if (first) {
+        actions[first].reset().play();
+        for (var i = 0; i < 12; i++) {
+          mixer.update(actions[first].getClip().duration / 12);
+          scene.updateMatrixWorld(true);
+          animBox.union(new THREE.Box3().setFromObject(skinned || root));
+        }
+        actions[first].stop();
+      }
+      var aSize = animBox.getSize(new THREE.Vector3());
+      say('animated extent ' + aSize.x.toFixed(2) + ' × ' + aSize.y.toFixed(2) + ' × ' + aSize.z.toFixed(2) + ' m',
+          aSize.y > size.y * 1.6 ? 'bad' : 'ok');
+      if (aSize.y > size.y * 1.6) {
+        say('⚠ the ANIMATED model is far larger than its bind pose — that is the\n  bug, not the camera.', 'bad');
+      }
+      box = animBox; size = aSize; centre = animBox.getCenter(new THREE.Vector3());
+    }
+
+    var r = Math.max(size.x, size.y, size.z) || 2;
+    if (!isFinite(r) || r <= 0) r = 2;
+    camera.position.set(centre.x + r * 1.1, centre.y + r * 0.35, centre.z + r * 2.0);
+    controls.target.copy(centre);
+    camera.near = Math.max(0.01, r / 200); camera.far = r * 60 + 100;
+    camera.updateProjectionMatrix();
+    controls.update();
+    // Belt and braces: a NaN here means a black screen with no error at all.
+    if (!isFinite(camera.position.x) || !isFinite(camera.position.y) || !isFinite(camera.position.z)) {
+      camera.position.set(2.4, 1.6, 3.6); controls.target.set(0, 0.9, 0); controls.update();
+      say('camera framing produced NaN — fell back to a default view', 'bad');
+    }
+    say('camera at ' + camera.position.x.toFixed(2) + ', ' + camera.position.y.toFixed(2) + ', ' + camera.position.z.toFixed(2) +
+        ' looking at ' + centre.x.toFixed(2) + ', ' + centre.y.toFixed(2) + ', ' + centre.z.toFixed(2));
+    say('\nIf the character walks here but not in the yard, the asset is fine\nand the refinery load path is at fault.', 'warn');
+  }, function (p) {
+    if (p && p.total) say('… ' + Math.round((p.loaded / p.total) * 100) + '%');
+  }, function (err) {
+    say('LOAD FAILED: ' + (err && err.message ? err.message : err), 'bad');
+  });
+
+  function buildClipButtons(names) {
+    var host = document.getElementById('clips');
+    host.innerHTML = '';
+    names.forEach(function (n) {
+      var b = document.createElement('button');
+      b.textContent = '▶ ' + n;
+      b.dataset.clip = n;
+      b.onclick = function () { play(n); };
+      host.appendChild(b);
+    });
+  }
+  function play(name) {
+    if (!actions[name]) return;
+    var prev = actions[current];
+    var next = actions[name];
+    next.reset().play();
+    if (prev && prev !== next) next.crossFadeFrom(prev, 0.25, true);
+    current = name;
+    Array.prototype.forEach.call(document.querySelectorAll('#clips button'), function (b) {
+      b.classList.toggle('on', b.dataset.clip === name);
+    });
+  }
+
+  /* Re-frame on whatever the model is doing right now. Useful because the
+     animated extent can differ from the bind pose, and because the user can
+     get lost after orbiting. */
+  document.getElementById('btn-fit').onclick = function () {
+    if (!root) return;
+    scene.updateMatrixWorld(true);
+    var b = new THREE.Box3().setFromObject(skinned || root);
+    var c = b.getCenter(new THREE.Vector3());
+    var s = b.getSize(new THREE.Vector3());
+    var r = Math.max(s.x, s.y, s.z) || 2;
+    camera.position.set(c.x + r * 1.1, c.y + r * 0.35, c.z + r * 2.2);
+    controls.target.copy(c);
+    camera.near = Math.max(0.01, r / 200); camera.far = r * 60 + 100;
+    camera.updateProjectionMatrix(); controls.update();
+    say('re-framed on ' + s.x.toFixed(2) + ' × ' + s.y.toFixed(2) + ' × ' + s.z.toFixed(2) + ' m');
+  };
+
+  document.getElementById('btn-pose').onclick = function () {
+    if (!mixer) return;
+    mixer.stopAllAction(); current = null;
+    if (skinned) { skinned.skeleton.pose(); skinned.skeleton.update(); }
+    Array.prototype.forEach.call(document.querySelectorAll('#clips button'), function (b) { b.classList.remove('on'); });
+    say('frozen in bind pose — if THIS looks right but the clips do not, the\nproblem is the animation, not the mesh or the scale.', 'warn');
+  };
+  document.getElementById('btn-spin').onclick = function () {
+    spin = !spin; this.classList.toggle('on', spin);
+  };
+  document.getElementById('btn-wire').onclick = function () {
+    this.classList.toggle('on');
+    var on = this.classList.contains('on');
+    scene.traverse(function (n) { if (n.isMesh && n.material) n.material.wireframe = on; });
+  };
+  document.getElementById('btn-bones').onclick = function () {
+    this.classList.toggle('on');
+    if (skelHelper) { scene.remove(skelHelper); skelHelper = null; return; }
+    if (!skinned) return;
+    skelHelper = new THREE.SkeletonHelper(skinned);
+    skelHelper.material.linewidth = 2;
+    scene.add(skelHelper);
+  };
+
+  var last = performance.now();
+  (function loop() {
+    requestAnimationFrame(loop);
+    var now = performance.now();
+    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    resize();
+    if (mixer) mixer.update(dt);
+    if (spin && root) { var p = root.parent; (p && p.isGroup ? p : root).rotation.y += dt * 0.5; }
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+})();
+</script>
+</body>
+</html>

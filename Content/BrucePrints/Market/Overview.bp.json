@@ -1,0 +1,806 @@
+{
+ "system": "Market",
+ "label": "LUNI Marketplace",
+ "icon": "🛒",
+ "print": "Overview",
+ "nodes": [
+  {
+   "id": "renderMarket",
+   "name": "renderMarket",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 181284,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.marketTab",
+    "App.marketFilter",
+    "Profile.cloud",
+    "App.screen",
+    "ResMarket.loading",
+    "ResMarket.lastFetch",
+    "ResMarket.open",
+    "ResMarket.mine"
+   ],
+   "writes": [
+    "App.screen",
+    "App.titleHub",
+    "App.marketTab",
+    "App._luniBrowse"
+   ],
+   "calls": 10,
+   "x": 80,
+   "y": 80
+  },
+  {
+   "id": "resMarketFetch",
+   "name": "resMarketFetch",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62285,
+   "params": [],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.loading",
+    "Cloud.client",
+    "ResMarket.caps"
+   ],
+   "writes": [
+    "ResMarket._err",
+    "ResMarket.loadFailed",
+    "ResMarket.loading",
+    "ResMarket.tableMissing",
+    "ResMarket.open",
+    "ResMarket.mine",
+    "ResMarket.lastFetch"
+   ],
+   "calls": 0,
+   "x": 760,
+   "y": 80
+  },
+  {
+   "id": "resMarketSubscribe",
+   "name": "resMarketSubscribe",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62055,
+   "params": [],
+   "async": false,
+   "reads": [
+    "ResMarket._channel",
+    "Profile.cloud",
+    "Cloud.client",
+    "ResMarket._refetchT",
+    "App.screen",
+    "App.marketTab"
+   ],
+   "writes": [
+    "ResMarket._channel",
+    "ResMarket._refetchT",
+    "ResMarket._rt"
+   ],
+   "calls": 1,
+   "x": 420,
+   "y": 80
+  },
+  {
+   "id": "resMarketUnsubscribe",
+   "name": "resMarketUnsubscribe",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62071,
+   "params": [],
+   "async": false,
+   "reads": [
+    "ResMarket._refetchT",
+    "ResMarket._channel"
+   ],
+   "writes": [
+    "ResMarket._refetchT",
+    "ResMarket._channel",
+    "ResMarket._rt"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 212
+  },
+  {
+   "id": "resMarketPost",
+   "name": "resMarketPost",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62334,
+   "params": [
+    "resource",
+    "lotSize",
+    "lots",
+    "pay"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.caps",
+    "ResMarket._lastPostAt",
+    "ResMarket.mine",
+    "Profile.account",
+    "Cloud.client"
+   ],
+   "writes": [
+    "ResMarket._lastPostAt"
+   ],
+   "calls": 1,
+   "x": 80,
+   "y": 212
+  },
+  {
+   "id": "resMarketTake",
+   "name": "resMarketTake",
+   "kind": "data",
+   "file": "public/index.html",
+   "line": 62456,
+   "params": [
+    "listing",
+    "lots"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.open",
+    "ResMarket._settling",
+    "ResMarket.caps",
+    "Cloud.client"
+   ],
+   "writes": [
+    "ResMarket._settling"
+   ],
+   "calls": 1,
+   "x": 420,
+   "y": 344
+  },
+  {
+   "id": "_luniToggleWatch",
+   "name": "_luniToggleWatch",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181605,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 2,
+   "x": 80,
+   "y": 344
+  },
+  {
+   "id": "renderMarketBrowse",
+   "name": "renderMarketBrowse",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 182083,
+   "params": [
+    "listings",
+    "filter"
+   ],
+   "async": false,
+   "reads": [
+    "App.marketListingTypeFilter",
+    "App.marketSearch",
+    "App.marketSort",
+    "App.marketPage",
+    "Profile.lockedSov",
+    "Profile.lockedGems",
+    "Profile.gems"
+   ],
+   "writes": [
+    "App.marketPage"
+   ],
+   "calls": 1,
+   "x": 420,
+   "y": 476
+  },
+  {
+   "id": "renderMarketStock",
+   "name": "renderMarketStock",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 183481,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.usage",
+    "Market.salesLog",
+    "Forge.customCards",
+    "App.stockRange",
+    "App.stockFactionId",
+    "Market.listings"
+   ],
+   "writes": [
+    "App.stockRange",
+    "App.stockFactionId"
+   ],
+   "calls": 0,
+   "x": 420,
+   "y": 608
+  },
+  {
+   "id": "_resListingExpired",
+   "name": "_resListingExpired",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 62012,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 476
+  },
+  {
+   "id": "resMarketBuy",
+   "name": "resMarketBuy",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 62540,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 608
+  },
+  {
+   "id": "resMarketCancel",
+   "name": "resMarketCancel",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62542,
+   "params": [
+    "listing"
+   ],
+   "async": true,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.mine",
+    "ResMarket.caps",
+    "Cloud.client"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 740
+  },
+  {
+   "id": "_luniWatchKey",
+   "name": "_luniWatchKey",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181602,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 760,
+   "y": 212
+  },
+  {
+   "id": "_luniWatchList",
+   "name": "_luniWatchList",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181603,
+   "params": [],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 740
+  },
+  {
+   "id": "_luniWatched",
+   "name": "_luniWatched",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181604,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 872
+  },
+  {
+   "id": "_luniFindListing",
+   "name": "_luniFindListing",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181658,
+   "params": [
+    "id"
+   ],
+   "async": false,
+   "reads": [
+    "ResMarket.mine",
+    "ResMarket.open",
+    "Market.listings"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1004
+  },
+  {
+   "id": "_luniSellerUid",
+   "name": "_luniSellerUid",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181674,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1136
+  },
+  {
+   "id": "_luniFetchSeller",
+   "name": "_luniFetchSeller",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181682,
+   "params": [
+    "uid"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "App.screen",
+    "App.marketTab"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1268
+  },
+  {
+   "id": "_luniFetchHistory",
+   "name": "_luniFetchHistory",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181693,
+   "params": [
+    "key"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "Cloud.client",
+    "App.screen",
+    "App.marketTab",
+    "App.dvsAssetId"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 80,
+   "y": 1400
+  },
+  {
+   "id": "renderMarketMyListings",
+   "name": "renderMarketMyListings",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 182733,
+   "params": [
+    "myListings"
+   ],
+   "async": false,
+   "reads": [
+    "Market.listings"
+   ],
+   "writes": [],
+   "calls": 1,
+   "x": 420,
+   "y": 872
+  },
+  {
+   "id": "_resListingAgeMs",
+   "name": "_resListingAgeMs",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 62008,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1004
+  },
+  {
+   "id": "resListingPriceLabel",
+   "name": "resListingPriceLabel",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 62042,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1532
+  },
+  {
+   "id": "_resListingToTile",
+   "name": "_resListingToTile",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 62627,
+   "params": [
+    "r"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1136
+  },
+  {
+   "id": "_luniUid",
+   "name": "_luniUid",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181601,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Profile.cloud"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 1100,
+   "y": 80
+  },
+  {
+   "id": "_luniPhoneRows",
+   "name": "_luniPhoneRows",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181618,
+   "params": [
+    "mine"
+   ],
+   "async": false,
+   "reads": [
+    "Profile.cloud",
+    "ResMarket.mine",
+    "ResMarket.open"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1664
+  },
+  {
+   "id": "_luniKeyOf",
+   "name": "_luniKeyOf",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181667,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1796
+  },
+  {
+   "id": "_luniMissing",
+   "name": "_luniMissing",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181680,
+   "params": [
+    "err"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1268
+  },
+  {
+   "id": "_luniLocalSales",
+   "name": "_luniLocalSales",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181707,
+   "params": [
+    "key"
+   ],
+   "async": false,
+   "reads": [
+    "Market.salesLog"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 1928
+  },
+  {
+   "id": "_luniStars",
+   "name": "_luniStars",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181713,
+   "params": [
+    "avg"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2060
+  },
+  {
+   "id": "_luniAgo",
+   "name": "_luniAgo",
+   "kind": "pure",
+   "file": "public/index.html",
+   "line": 181719,
+   "params": [
+    "t"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2192
+  },
+  {
+   "id": "_luniSparkline",
+   "name": "_luniSparkline",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181721,
+   "params": [
+    "rows"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2324
+  },
+  {
+   "id": "_luniHeaderHtml",
+   "name": "_luniHeaderHtml",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181736,
+   "params": [
+    "tab"
+   ],
+   "async": false,
+   "reads": [
+    "App.marketSearch",
+    "App.marketFilter",
+    "Profile.gems",
+    "Profile.sovereigns",
+    "App.marketListingTypeFilter"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1400
+  },
+  {
+   "id": "_luniConditionOf",
+   "name": "_luniConditionOf",
+   "kind": "function",
+   "file": "public/index.html",
+   "line": 181761,
+   "params": [
+    "l"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 80,
+   "y": 2456
+  },
+  {
+   "id": "renderMarketTile",
+   "name": "renderMarketTile",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 181973,
+   "params": [
+    "listing",
+    "opts"
+   ],
+   "async": false,
+   "reads": [],
+   "writes": [],
+   "calls": 0,
+   "x": 760,
+   "y": 344
+  },
+  {
+   "id": "renderMarketSell",
+   "name": "renderMarketSell",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 182476,
+   "params": [],
+   "async": false,
+   "reads": [
+    "Forge.customCards",
+    "Profile.itemInventory",
+    "App.marketSellMode",
+    "App.marketSellDurationIdx"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1532
+  },
+  {
+   "id": "renderMarketValuation",
+   "name": "renderMarketValuation",
+   "kind": "event",
+   "file": "public/index.html",
+   "line": 182905,
+   "params": [],
+   "async": false,
+   "reads": [
+    "App.dvsSearch",
+    "App.dvsSort"
+   ],
+   "writes": [],
+   "calls": 0,
+   "x": 420,
+   "y": 1664
+  }
+ ],
+ "edges": [
+  {
+   "from": "renderMarket",
+   "to": "resMarketSubscribe"
+  },
+  {
+   "from": "renderMarket",
+   "to": "resMarketFetch"
+  },
+  {
+   "from": "renderMarket",
+   "to": "renderMarketBrowse"
+  },
+  {
+   "from": "renderMarket",
+   "to": "_luniWatchList"
+  },
+  {
+   "from": "renderMarket",
+   "to": "renderMarketSell"
+  },
+  {
+   "from": "renderMarket",
+   "to": "renderMarketMyListings"
+  },
+  {
+   "from": "renderMarket",
+   "to": "renderMarketStock"
+  },
+  {
+   "from": "renderMarket",
+   "to": "renderMarketValuation"
+  },
+  {
+   "from": "renderMarket",
+   "to": "_luniHeaderHtml"
+  },
+  {
+   "from": "renderMarket",
+   "to": "resMarketUnsubscribe"
+  },
+  {
+   "from": "resMarketSubscribe",
+   "to": "resMarketFetch"
+  },
+  {
+   "from": "resMarketPost",
+   "to": "resMarketFetch"
+  },
+  {
+   "from": "resMarketTake",
+   "to": "resMarketFetch"
+  },
+  {
+   "from": "_luniToggleWatch",
+   "to": "_luniWatchList"
+  },
+  {
+   "from": "_luniToggleWatch",
+   "to": "_luniWatchKey"
+  },
+  {
+   "from": "renderMarketBrowse",
+   "to": "renderMarketTile"
+  },
+  {
+   "from": "_resListingExpired",
+   "to": "_resListingAgeMs"
+  },
+  {
+   "from": "resMarketBuy",
+   "to": "resMarketTake"
+  },
+  {
+   "from": "resMarketCancel",
+   "to": "resMarketFetch"
+  },
+  {
+   "from": "_luniWatchKey",
+   "to": "_luniUid"
+  },
+  {
+   "from": "_luniWatchList",
+   "to": "_luniWatchKey"
+  },
+  {
+   "from": "_luniWatched",
+   "to": "_luniWatchList"
+  },
+  {
+   "from": "_luniFindListing",
+   "to": "_resListingToTile"
+  },
+  {
+   "from": "_luniSellerUid",
+   "to": "_luniUid"
+  },
+  {
+   "from": "_luniFetchSeller",
+   "to": "_luniMissing"
+  },
+  {
+   "from": "_luniFetchHistory",
+   "to": "_luniMissing"
+  },
+  {
+   "from": "renderMarketMyListings",
+   "to": "renderMarketTile"
+  }
+ ]
+}

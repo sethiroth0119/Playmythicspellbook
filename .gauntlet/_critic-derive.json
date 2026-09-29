@@ -1,0 +1,1410 @@
+{
+ "key2ids": {
+  "radius": [
+   "ed-onplay-radius"
+  ],
+  "amount": [
+   "ed-onplay-amount"
+  ],
+  "chance": [
+   "ed-onplay-chance"
+  ],
+  "anywhere": [
+   "ed-onplay-anywhere"
+  ],
+  "targeted": [
+   "ed-onplay-targeted"
+  ],
+  "targetCount": [
+   "ed-onplay-targetcount"
+  ],
+  "tSide": [
+   "ed-onplay-tside"
+  ],
+  "aoeAll": [
+   "ed-onplay-aoeall"
+  ],
+  "vfx": [
+   "ed-onplay-vfx"
+  ],
+  "useLimit": [
+   "ed-onplay-uselimit"
+  ],
+  "discountDuration": [
+   "ed-onplay-discdur"
+  ],
+  "scalePer": [
+   "ed-onplay-scalezone",
+   "ed-onplay-scalename",
+   "ed-onplay-scaleside"
+  ],
+  "stat": [
+   "ed-onplay-stat"
+  ],
+  "countZone": [
+   "ed-onplay-countzone"
+  ],
+  "countSide": [
+   "ed-onplay-countside"
+  ],
+  "shuffleZones": [
+   "ed-onplay-shufzones"
+  ],
+  "shuffleSide": [
+   "ed-onplay-shufside"
+  ],
+  "shuffleSelf": [
+   "ed-onplay-shufself"
+  ],
+  "drawSide": [
+   "ed-onplay-drawside"
+  ],
+  "weatherType": [
+   "ed-onplay-weathertype"
+  ],
+  "duration": [
+   "ed-onplay-weather-dur"
+  ],
+  "timeOfDay": [
+   "ed-onplay-timeofday"
+  ],
+  "seizeTreatAs": [
+   "ed-onplay-seizeas"
+  ],
+  "setZone": [
+   "ed-onplay-setzone"
+  ],
+  "setKind": [
+   "ed-onplay-setkind"
+  ],
+  "status": [
+   "ed-onplay-status"
+  ],
+  "statusDuration": [
+   "ed-onplay-status-dur"
+  ],
+  "controlDuration": [
+   "ed-onplay-control-dur"
+  ],
+  "sacTarget": [
+   "ed-onplay-sactarget"
+  ],
+  "sacDamage": [
+   "ed-onplay-sacdmg"
+  ],
+  "sacMax": [
+   "ed-onplay-sacmax"
+  ],
+  "sendZone": [
+   "ed-onplay-sendzone"
+  ],
+  "empowerHero": [
+   "ed-onplay-empowerhero"
+  ],
+  "cost": [
+   "ed-onplay-cost-discard",
+   "ed-onplay-cost-life",
+   "ed-onplay-cost-banish",
+   "ed-onplay-cost-tribute"
+  ],
+  "summonCardId": [
+   "ed-onplay-kalon-card",
+   "ed-onplay-summon-card"
+  ],
+  "searchDeckType": [
+   "ed-onplay-searchtype"
+  ],
+  "searchDeckCardIds": [
+   "ed-onplay-searchcards"
+  ],
+  "costDelta": [
+   "ed-onplay-searchcostdelta"
+  ],
+  "summonZone": [
+   "ed-onplay-summonzone"
+  ],
+  "summonCardIds": [
+   "ed-onplay-summoncards"
+  ],
+  "summonCardRule": [
+   "ed-onplay-summoncards"
+  ],
+  "searchDeckCardRule": [
+   "ed-onplay-searchcards"
+  ],
+  "surfaceType": [
+   "ed-onplay-surface"
+  ],
+  "filter": [
+   "ed-onplay-filter-element",
+   "ed-onplay-filter-type",
+   "ed-onplay-filter-faction",
+   "ed-onplay-filter-name",
+   "ed-onplay-filter-cost",
+   "ed-onplay-filter-costmode"
+  ],
+  "filterCardIds": [
+   "ed-onplay-filter-cards"
+  ],
+  "salvageCardIds": [
+   "ed-onplay-salvage-cards"
+  ],
+  "negateScope": [
+   "ed-onplay-negate-scope"
+  ],
+  "vanishTarget": [
+   "ed-onplay-vanish-target"
+  ],
+  "returnOn": [
+   "ed-onplay-return-on"
+  ],
+  "condition": [
+   "ed-onplay-cond-card",
+   "ed-onplay-cond-side"
+  ],
+  "wipeTarget": [
+   "ed-onplay-wipe-target"
+  ],
+  "wipeSpareHero": [
+   "ed-onplay-wipe-sparehero"
+  ],
+  "buffTarget": [
+   "ed-onplay-buff-target"
+  ],
+  "graveSide": [
+   "ed-onplay-grave-side"
+  ],
+  "sacrificeEffect": [
+   "ed-onplay-sac-effect"
+  ],
+  "callLockMode": [
+   "ed-onplay-locktype"
+  ]
+ },
+ "engine": {
+  "draw": [
+   "amount"
+  ],
+  "negate": [],
+  "riposte": [
+   "amount"
+  ],
+  "repel": [
+   "amount"
+  ],
+  "mirror": [
+   "amount",
+   "filter"
+  ],
+  "transformAlly": [
+   "_targetId"
+  ],
+  "vanishReturn": [
+   "vanishTarget",
+   "_targetId",
+   "vfx",
+   "statusDuration",
+   "returnOn"
+  ],
+  "targetStrike": [
+   "tSide",
+   "global",
+   "radius",
+   "targetSide",
+   "targetCount",
+   "_targetId",
+   "amount",
+   "statusDuration",
+   "status"
+  ],
+  "swapAtkDef": [],
+  "setWeather": [
+   "weatherType",
+   "duration",
+   "customEffects"
+  ],
+  "setTimeOfDay": [
+   "timeOfDay"
+  ],
+  "equipStats": [
+   "amount"
+  ],
+  "drainLife": [
+   "amount"
+  ],
+  "readyAllies": [],
+  "buffPerCard": [
+   "amount",
+   "countZone",
+   "countSide",
+   "filter",
+   "stat",
+   "buffTarget",
+   "statusDuration"
+  ],
+  "damagePerCard": [
+   "amount",
+   "countZone",
+   "countSide",
+   "filter"
+  ],
+  "stealStatus": [],
+  "cloneUnit": [
+   "_targetId"
+  ],
+  "pullUnits": [
+   "amount",
+   "tSide"
+  ],
+  "pushUnits": [
+   "amount",
+   "tSide"
+  ],
+  "cheapenHand": [
+   "amount",
+   "discountDuration",
+   "statusDuration",
+   "filter"
+  ],
+  "grantProtection": [
+   "protectFlags",
+   "boostDuration",
+   "statusDuration",
+   "tSide"
+  ],
+  "damageHero": [
+   "amount"
+  ],
+  "healHero": [
+   "amount"
+  ],
+  "deckToGrave": [
+   "amount",
+   "filterCardIds",
+   "_autoPick",
+   "filter"
+  ],
+  "drawFiltered": [
+   "amount",
+   "filter"
+  ],
+  "negateField": [
+   "negateScope",
+   "statusDuration"
+  ],
+  "mirrorWard": [],
+  "soulSwap": [
+   "controlDuration"
+  ],
+  "tributeRite": [
+   "amount",
+   "sacMax"
+  ],
+  "stillnessSeal": [
+   "statusDuration"
+  ],
+  "destroyTarget": [
+   "_targetId"
+  ],
+  "graveSteal": [
+   "graveSide"
+  ],
+  "destroyLocation": [],
+  "summonFromZone": [
+   "summonZone",
+   "summonCardIds",
+   "amount",
+   "_autoPick"
+  ],
+  "intimidate": [
+   "status",
+   "statusDuration",
+   "chance"
+  ],
+  "aoeStatus": [
+   "status",
+   "statusDuration",
+   "chance"
+  ],
+  "aoeDamage": [
+   "amount"
+  ],
+  "aoeKill": [
+   "chance"
+  ],
+  "takeControlAll": [
+   "controlDuration"
+  ],
+  "sacrificeNearby": [
+   "sacDamage",
+   "amount",
+   "sacMax",
+   "sacTarget"
+  ],
+  "takeControl": [
+   "chance",
+   "controlDuration",
+   "amount"
+  ],
+  "boardWipe": [
+   "wipeTarget",
+   "wipeSpareHero"
+  ],
+  "purityPact": [
+   "filter",
+   "nameIncludes"
+  ],
+  "destroyFrozen": [],
+  "burnBurst": [],
+  "purgeAscended": [],
+  "applyBuffDebuff": [
+   "status",
+   "statusDuration",
+   "chance",
+   "buffTarget",
+   "tSide"
+  ],
+  "swapPositions": [
+   "_targetId"
+  ],
+  "chainDamage": [
+   "amount"
+  ],
+  "tributeDraw": [
+   "amount"
+  ],
+  "weatherLock": [
+   "statusDuration"
+  ],
+  "mirrorStats": [
+   "_targetId",
+   "statusDuration"
+  ],
+  "stealCard": [
+   "filter",
+   "amount"
+  ],
+  "sealSlot": [
+   "statusDuration"
+  ],
+  "delayedBlast": [
+   "statusDuration",
+   "amount"
+  ],
+  "rewind": [],
+  "copyLastMove": [],
+  "heal": [
+   "amount"
+  ],
+  "buffSelf": [
+   "status",
+   "statusDuration"
+  ],
+  "buffAllies": [
+   "status",
+   "statusDuration"
+  ],
+  "energyGain": [
+   "amount"
+  ],
+  "increaseUltimateCharge": [
+   "amount",
+   "side"
+  ],
+  "extendEmotion": [
+   "turns",
+   "polarity",
+   "side"
+  ],
+  "clearEmotion": [
+   "polarity",
+   "side"
+  ],
+  "discardCards": [
+   "amount",
+   "chance"
+  ],
+  "peekHand": [],
+  "peekDiscard": [],
+  "peekBanish": [],
+  "drawCards": [
+   "amount"
+  ],
+  "searchDeck": [
+   "searchDeckType",
+   "searchDeckCardIds",
+   "costDelta",
+   "_autoPick"
+  ],
+  "millSearch": [
+   "_autoPick",
+   "amount",
+   "searchDeckCardIds"
+  ],
+  "discardSelf": [
+   "amount"
+  ],
+  "reviveGrave": [
+   "searchDeckCardIds"
+  ],
+  "sendMatching": [
+   "_autoPick",
+   "sendZone",
+   "searchDeckCardIds",
+   "amount"
+  ],
+  "empowerTeam": [
+   "amount",
+   "empowerHero"
+  ],
+  "vanishTemp": [
+   "statusDuration",
+   "tSide",
+   "aoeAll"
+  ],
+  "summonSelf": [],
+  "selfToHand": [],
+  "millSelf": [
+   "amount"
+  ],
+  "graveToHand": [
+   "amount",
+   "salvageCardIds",
+   "filter",
+   "_autoPick"
+  ],
+  "vanishGraveRandom": [
+   "graveSide",
+   "amount"
+  ],
+  "vanishGravePick": [
+   "graveSide",
+   "amount"
+  ],
+  "vanishGraveUnit": [
+   "graveSide",
+   "amount"
+  ],
+  "banishGrave": [
+   "graveSide"
+  ],
+  "negateGraveyard": [
+   "graveSide",
+   "statusDuration"
+  ],
+  "banishUnit": [
+   "amount"
+  ],
+  "vanishTribe": [
+   "filter",
+   "nameIncludes"
+  ],
+  "costSeal": [
+   "amount"
+  ],
+  "millEnemy": [
+   "amount"
+  ],
+  "surveil": [
+   "amount"
+  ],
+  "banishDeck": [
+   "amount"
+  ],
+  "banishHand": [
+   "amount"
+  ],
+  "damageFromGrave": [
+   "amount"
+  ],
+  "drawFromVoid": [
+   "amount"
+  ],
+  "recycleVoid": [
+   "amount"
+  ],
+  "voidFromGrave": [
+   "amount"
+  ],
+  "fight": [],
+  "proliferate": [],
+  "scry": [
+   "amount"
+  ],
+  "inspire": [
+   "amount"
+  ],
+  "paintSurface": [
+   "surfaceType"
+  ],
+  "kalonSource": [
+   "amount"
+  ],
+  "bounceUnit": [
+   "_targetId"
+  ],
+  "shuffleToDeck": [
+   "shuffleZones",
+   "shuffleSide",
+   "shuffleSelf",
+   "amount",
+   "drawSide"
+  ],
+  "singleKill": [
+   "chance",
+   "_targetId"
+  ],
+  "summon": [
+   "summonCardId",
+   "amount"
+  ],
+  "polycreate": [
+   "matSources",
+   "_autoPick",
+   "summonCardId"
+  ],
+  "polyFromGrave": [
+   "matSources",
+   "_autoPick",
+   "summonCardId"
+  ],
+  "sacrificeToSummon": [
+   "summonZone",
+   "summonCardIds",
+   "sendZone"
+  ],
+  "sacrificeSelf": [
+   "sendZone"
+  ],
+  "setFromZone": [
+   "setZone",
+   "setKind",
+   "summonCardIds",
+   "filterCardIds",
+   "filter",
+   "amount"
+  ],
+  "clearWeather": [],
+  "clearTraps": [],
+  "revealTraps": [],
+  "clearWalls": [],
+  "scanAllEnemies": [],
+  "scanAllTurn": [],
+  "absorbSurface": [
+   "surfaceType",
+   "amount"
+  ],
+  "refuel": [
+   "tSide",
+   "amount"
+  ],
+  "addCounters": [
+   "amount",
+   "tSide"
+  ],
+  "removeCounters": [
+   "amount",
+   "tSide"
+  ],
+  "clearSurfaces": [],
+  "sacrifice": [
+   "amount",
+   "sacrificeEffect",
+   "status",
+   "statusDuration"
+  ],
+  "verdict": [
+   "effectA",
+   "effectB",
+   "labelB",
+   "labelA"
+  ],
+  "bestow": [
+   "status",
+   "statusDuration"
+  ],
+  "callLock": [
+   "callLockMode"
+  ]
+ },
+ "cat": [
+  {
+   "id": "intimidate",
+   "needs": [
+    "radius",
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "aoeDamage",
+   "needs": [
+    "radius",
+    "amount"
+   ]
+  },
+  {
+   "id": "aoeKill",
+   "needs": [
+    "radius",
+    "chance"
+   ]
+  },
+  {
+   "id": "aoeStatus",
+   "needs": [
+    "radius",
+    "status",
+    "statusDuration",
+    "chance"
+   ]
+  },
+  {
+   "id": "heal",
+   "needs": [
+    "radius",
+    "amount"
+   ]
+  },
+  {
+   "id": "buffSelf",
+   "needs": [
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "buffAllies",
+   "needs": [
+    "radius",
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "energyGain",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "drawCards",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "kalonSource",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "bounceUnit",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "singleKill",
+   "needs": [
+    "radius",
+    "chance"
+   ]
+  },
+  {
+   "id": "takeControl",
+   "needs": [
+    "radius",
+    "chance",
+    "amount",
+    "controlDuration"
+   ]
+  },
+  {
+   "id": "takeControlAll",
+   "needs": [
+    "controlDuration"
+   ]
+  },
+  {
+   "id": "sacrificeNearby",
+   "needs": [
+    "radius",
+    "sacDamage",
+    "sacMax",
+    "sacTarget"
+   ]
+  },
+  {
+   "id": "summonSelf",
+   "needs": []
+  },
+  {
+   "id": "vanishTemp",
+   "needs": [
+    "radius",
+    "statusDuration",
+    "tSide"
+   ]
+  },
+  {
+   "id": "sendMatching",
+   "needs": [
+    "amount",
+    "sendZone"
+   ]
+  },
+  {
+   "id": "empowerTeam",
+   "needs": [
+    "amount",
+    "empowerHero"
+   ]
+  },
+  {
+   "id": "transformAlly",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "summon",
+   "needs": [
+    "amount",
+    "summonCard"
+   ]
+  },
+  {
+   "id": "polycreate",
+   "needs": [
+    "radius",
+    "summonCard",
+    "matSources",
+    "seizeTreatAs"
+   ]
+  },
+  {
+   "id": "polyFromGrave",
+   "needs": [
+    "summonCard",
+    "matSources",
+    "seizeTreatAs"
+   ]
+  },
+  {
+   "id": "searchDeck",
+   "needs": [
+    "searchDeckType"
+   ]
+  },
+  {
+   "id": "paintSurface",
+   "needs": [
+    "surfaceType",
+    "radius"
+   ]
+  },
+  {
+   "id": "absorbSurface",
+   "needs": [
+    "surfaceType",
+    "radius",
+    "amount"
+   ]
+  },
+  {
+   "id": "refuel",
+   "needs": [
+    "radius",
+    "amount",
+    "tSide"
+   ]
+  },
+  {
+   "id": "addCounters",
+   "needs": [
+    "amount",
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "removeCounters",
+   "needs": [
+    "amount",
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "discardCards",
+   "needs": [
+    "amount",
+    "chance"
+   ]
+  },
+  {
+   "id": "peekHand",
+   "needs": []
+  },
+  {
+   "id": "peekDiscard",
+   "needs": []
+  },
+  {
+   "id": "peekBanish",
+   "needs": []
+  },
+  {
+   "id": "millSelf",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "millSearch",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "discardSelf",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "reviveGrave",
+   "needs": []
+  },
+  {
+   "id": "graveToHand",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "selfToHand",
+   "needs": []
+  },
+  {
+   "id": "banishGrave",
+   "needs": [
+    "graveSide"
+   ]
+  },
+  {
+   "id": "vanishGraveRandom",
+   "needs": [
+    "amount",
+    "graveSide"
+   ]
+  },
+  {
+   "id": "vanishGravePick",
+   "needs": [
+    "amount",
+    "graveSide"
+   ]
+  },
+  {
+   "id": "vanishGraveUnit",
+   "needs": [
+    "amount",
+    "graveSide"
+   ]
+  },
+  {
+   "id": "negateGraveyard",
+   "needs": [
+    "graveSide",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "clearWeather",
+   "needs": []
+  },
+  {
+   "id": "clearTraps",
+   "needs": []
+  },
+  {
+   "id": "revealTraps",
+   "needs": []
+  },
+  {
+   "id": "clearWalls",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "clearSurfaces",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "scanAllEnemies",
+   "needs": []
+  },
+  {
+   "id": "scanAllTurn",
+   "needs": []
+  },
+  {
+   "id": "boardWipe",
+   "needs": [
+    "wipeTarget",
+    "wipeSpareHero"
+   ]
+  },
+  {
+   "id": "purgeAscended",
+   "needs": []
+  },
+  {
+   "id": "applyBuffDebuff",
+   "needs": [
+    "radius",
+    "status",
+    "statusDuration",
+    "buffTarget",
+    "chance"
+   ]
+  },
+  {
+   "id": "sacrifice",
+   "needs": [
+    "amount",
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "verdict",
+   "needs": [
+    "labelA",
+    "labelB"
+   ]
+  },
+  {
+   "id": "damageHero",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "healHero",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "deckToGrave",
+   "needs": [
+    "amount",
+    "filter"
+   ]
+  },
+  {
+   "id": "drawFiltered",
+   "needs": [
+    "amount",
+    "filter"
+   ]
+  },
+  {
+   "id": "negateField",
+   "needs": [
+    "radius",
+    "negateScope",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "vanishReturn",
+   "needs": [
+    "radius",
+    "vanishTarget",
+    "statusDuration",
+    "returnOn"
+   ]
+  },
+  {
+   "id": "destroyTarget",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "purityPact",
+   "needs": [
+    "filter"
+   ]
+  },
+  {
+   "id": "buffPerCard",
+   "needs": [
+    "amount",
+    "filter",
+    "countZone",
+    "countSide",
+    "buffTarget"
+   ]
+  },
+  {
+   "id": "destroyFrozen",
+   "needs": []
+  },
+  {
+   "id": "burnBurst",
+   "needs": []
+  },
+  {
+   "id": "vanishTribe",
+   "needs": [
+    "filter"
+   ]
+  },
+  {
+   "id": "costSeal",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "graveSteal",
+   "needs": [
+    "graveSide"
+   ]
+  },
+  {
+   "id": "targetStrike",
+   "needs": [
+    "amount",
+    "radius",
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "shuffleToDeck",
+   "needs": [
+    "shuffleZones",
+    "shuffleSide",
+    "shuffleSelf",
+    "amount",
+    "drawSide"
+   ]
+  },
+  {
+   "id": "bestow",
+   "needs": [
+    "radius",
+    "status",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "callLock",
+   "needs": [
+    "callLockMode"
+   ]
+  },
+  {
+   "id": "banishUnit",
+   "needs": [
+    "radius",
+    "amount"
+   ]
+  },
+  {
+   "id": "millEnemy",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "surveil",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "banishDeck",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "banishHand",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "damageFromGrave",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "drawFromVoid",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "recycleVoid",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "voidFromGrave",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "fight",
+   "needs": []
+  },
+  {
+   "id": "proliferate",
+   "needs": []
+  },
+  {
+   "id": "scry",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "inspire",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "swapAtkDef",
+   "needs": [
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "equipStats",
+   "needs": [
+    "radius",
+    "tSide",
+    "amount"
+   ]
+  },
+  {
+   "id": "drainLife",
+   "needs": [
+    "radius",
+    "amount"
+   ]
+  },
+  {
+   "id": "readyAllies",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "damagePerCard",
+   "needs": [
+    "radius",
+    "amount",
+    "countZone",
+    "countSide"
+   ]
+  },
+  {
+   "id": "stealStatus",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "cloneUnit",
+   "needs": [
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "cheapenHand",
+   "needs": [
+    "amount",
+    "discountDuration",
+    "filter"
+   ]
+  },
+  {
+   "id": "pullUnits",
+   "needs": [
+    "radius",
+    "tSide",
+    "amount"
+   ]
+  },
+  {
+   "id": "pushUnits",
+   "needs": [
+    "radius",
+    "tSide",
+    "amount"
+   ]
+  },
+  {
+   "id": "destroyLocation",
+   "needs": []
+  },
+  {
+   "id": "swapPositions",
+   "needs": [
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "chainDamage",
+   "needs": [
+    "amount",
+    "radius"
+   ]
+  },
+  {
+   "id": "tributeDraw",
+   "needs": [
+    "amount",
+    "radius"
+   ]
+  },
+  {
+   "id": "weatherLock",
+   "needs": [
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "mirrorStats",
+   "needs": [
+    "radius",
+    "tSide",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "stealCard",
+   "needs": [
+    "amount"
+   ]
+  },
+  {
+   "id": "sealSlot",
+   "needs": [
+    "radius",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "delayedBlast",
+   "needs": [
+    "amount",
+    "radius",
+    "statusDuration"
+   ]
+  },
+  {
+   "id": "rewind",
+   "needs": [
+    "radius",
+    "tSide"
+   ]
+  },
+  {
+   "id": "copyLastMove",
+   "needs": []
+  },
+  {
+   "id": "summonFromZone",
+   "needs": [
+    "summonZone",
+    "amount",
+    "summonCardIds",
+    "filter"
+   ]
+  },
+  {
+   "id": "setWeather",
+   "needs": [
+    "weatherType",
+    "duration"
+   ]
+  },
+  {
+   "id": "setTimeOfDay",
+   "needs": [
+    "timeOfDay"
+   ]
+  },
+  {
+   "id": "setFromZone",
+   "needs": [
+    "setZone",
+    "setKind",
+    "amount",
+    "filter"
+   ]
+  },
+  {
+   "id": "sacrificeSelf",
+   "needs": [
+    "sendZone"
+   ]
+  },
+  {
+   "id": "sacrificeToSummon",
+   "needs": [
+    "summonZone",
+    "summonCardIds",
+    "filter"
+   ]
+  },
+  {
+   "id": "mirrorWard",
+   "needs": [
+    "radius"
+   ]
+  },
+  {
+   "id": "soulSwap",
+   "needs": [
+    "radius",
+    "controlDuration"
+   ]
+  },
+  {
+   "id": "tributeRite",
+   "needs": [
+    "radius",
+    "sacMax",
+    "amount"
+   ]
+  },
+  {
+   "id": "stillnessSeal",
+   "needs": [
+    "statusDuration"
+   ]
+  }
+ ]
+}

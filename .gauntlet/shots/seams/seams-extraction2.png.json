@@ -1,0 +1,12 @@
+{
+  "centre": [
+    7,
+    5.5
+  ],
+  "tiles": [
+    "waterintake",
+    "deepmine",
+    "alloyworks",
+    "canecroft"
+  ]
+}

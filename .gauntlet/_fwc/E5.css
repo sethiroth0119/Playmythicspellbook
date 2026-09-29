@@ -1,0 +1,5 @@
+.fx-two .editor-grid > .editor-field.full:has(label > input[type="checkbox"]) { grid-column: 1 / -1; }
+.fx-two label:has(> input[type="checkbox"]), .fx-two label:has(> input[type="radio"]) { flex: 1 1 22rem; max-width: 24rem; padding: 4px 9px; }
+.fx-two input[type="checkbox"], .fx-two input[type="radio"] { width: 28px !important; height: 28px !important; }
+.fx-two .editor-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+@media (min-width: 1081px) { .fx-two .editor-grid > .editor-field.full { grid-column: 1 / -1; } }

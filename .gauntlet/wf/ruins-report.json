@@ -1,0 +1,463 @@
+{
+ "scene": "ruins&host=full",
+ "errs": [
+  "CONSOLE Failed to load resource: net::ERR_CONNECTION_RESET"
+ ],
+ "report": [
+  {
+   "name": "ruins-y0-nopan.png",
+   "askedYaw": 0,
+   "gotYaw": 0,
+   "pan": {
+    "x": 0,
+    "z": 0
+   },
+   "click": {
+    "samples": 168,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 0,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "hid": 1,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": []
+   },
+   "terrainRegistered": true,
+   "bakeMs": 23.3
+  },
+  {
+   "name": "ruins-y0-panA.png",
+   "askedYaw": 0,
+   "gotYaw": 0,
+   "pan": {
+    "x": 3.2,
+    "z": -2.4
+   },
+   "click": {
+    "samples": 123,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 55,
+    "feetTested": 5,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 0,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "hid": 1,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": []
+   },
+   "terrainRegistered": true,
+   "bakeMs": 18.5
+  },
+  {
+   "name": "ruins-y0-panB.png",
+   "askedYaw": 0,
+   "gotYaw": 0,
+   "pan": {
+    "x": -3.75,
+    "z": 2.67
+   },
+   "click": {
+    "samples": 157,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 60,
+    "feetTested": 10,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 1,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "hid": 1,
+      "of": 25,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "feet": false,
+      "px": [
+       753,
+       36
+      ]
+     }
+    ]
+   },
+   "terrainRegistered": true,
+   "bakeMs": 32.8
+  },
+  {
+   "name": "ruins-y60-nopan.png",
+   "askedYaw": 60,
+   "gotYaw": 60,
+   "pan": {
+    "x": 0,
+    "z": 0
+   },
+   "click": {
+    "samples": 154,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 0,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "hid": 1,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": []
+   },
+   "terrainRegistered": true,
+   "bakeMs": 29.7
+  },
+  {
+   "name": "ruins-y60-panA.png",
+   "askedYaw": 60,
+   "gotYaw": 60,
+   "pan": {
+    "x": 3.2,
+    "z": -2.4
+   },
+   "click": {
+    "samples": 154,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 2,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 0,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u68",
+      "at": [
+       7,
+       2
+      ],
+      "hid": 2,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": []
+   },
+   "terrainRegistered": true,
+   "bakeMs": 33.9
+  },
+  {
+   "name": "ruins-y60-panB.png",
+   "askedYaw": 60,
+   "gotYaw": 60,
+   "pan": {
+    "x": -3.75,
+    "z": 2.67
+   },
+   "click": {
+    "samples": 123,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 0,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 0,
+    "behind": 0,
+    "worst": [],
+    "bad": [],
+    "over": []
+   },
+   "terrainRegistered": true,
+   "bakeMs": 24.2
+  },
+  {
+   "name": "ruins-y180-nopan.png",
+   "askedYaw": 180,
+   "gotYaw": 180,
+   "pan": {
+    "x": 0,
+    "z": 0
+   },
+   "click": {
+    "samples": 168,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 1,
+    "bodyLeaks": 0,
+    "sameBand": 1,
+    "overMask": 1,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "hid": 2,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "feet": false,
+      "px": [
+       623,
+       77
+      ]
+     }
+    ]
+   },
+   "terrainRegistered": true,
+   "bakeMs": 23.6
+  },
+  {
+   "name": "ruins-y180-panA.png",
+   "askedYaw": 180,
+   "gotYaw": 180,
+   "pan": {
+    "x": 3.2,
+    "z": -2.4
+   },
+   "click": {
+    "samples": 158,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 50,
+    "feetTested": 10,
+    "feetHidden": 2,
+    "feetLeaks": 0,
+    "bodyHidden": 0,
+    "bodyLeaks": 0,
+    "sameBand": 0,
+    "overMask": 1,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "hid": 2,
+      "of": 15,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "feet": false,
+      "px": [
+       766,
+       9
+      ]
+     }
+    ]
+   },
+   "terrainRegistered": true,
+   "bakeMs": 27.6
+  },
+  {
+   "name": "ruins-y180-panB.png",
+   "askedYaw": 180,
+   "gotYaw": 180,
+   "pan": {
+    "x": -3.75,
+    "z": 2.67
+   },
+   "click": {
+    "samples": 119,
+    "mismatch": 0,
+    "bad": []
+   },
+   "painter": {
+    "items": 15,
+    "inversions": 0
+   },
+   "occlusion": {
+    "units": 2,
+    "samples": 70,
+    "feetTested": 10,
+    "feetHidden": 1,
+    "feetLeaks": 0,
+    "bodyHidden": 1,
+    "bodyLeaks": 0,
+    "sameBand": 1,
+    "overMask": 1,
+    "behind": 0,
+    "worst": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "hid": 2,
+      "of": 35,
+      "leaked": 0
+     }
+    ],
+    "bad": [],
+    "over": [
+     {
+      "unit": "u67",
+      "at": [
+       6,
+       10
+      ],
+      "feet": false,
+      "px": [
+       417,
+       173
+      ]
+     }
+    ]
+   },
+   "terrainRegistered": true,
+   "bakeMs": 17.4
+  }
+ ]
+}

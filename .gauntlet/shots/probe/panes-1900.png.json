@@ -1,0 +1,33 @@
+{
+  "control_px_changed": 0,
+  "framing": {
+    "cam": [
+      -4.5,
+      0.8,
+      -3.84
+    ],
+    "tgt": [
+      -2.4,
+      0.02,
+      -3
+    ],
+    "road": -3.5,
+    "side": 1
+  },
+  "clusters": 0,
+  "changedPx": 0,
+  "totalPx": 1440000,
+  "sunlit": [],
+  "biggest": [],
+  "wallLumRange": null,
+  "skyEnv": {
+    "builds": 1,
+    "lastMs": 240.10000000149012,
+    "totalMs": 240.10000000149012,
+    "on": true,
+    "mats": 4,
+    "w": 64,
+    "h": 32,
+    "rt": "336x64"
+  }
+}

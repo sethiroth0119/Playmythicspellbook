@@ -1,0 +1,25 @@
+{
+  "file": "supply-bench.glb",
+  "bytes": 3476060,
+  "triangles": 49284,
+  "textures": "webp-1024",
+  "bounds": {
+    "min": [
+      -0.951,
+      -0.658,
+      -0.398
+    ],
+    "max": [
+      0.949,
+      0.653,
+      0.398
+    ]
+  },
+  "dims": {
+    "w": 1.901,
+    "h": 1.311,
+    "d": 0.796
+  },
+  "source": "assets-source/glb-masters/hospital/supply-bench.glb",
+  "packedBy": "tools/pack-glb.mjs"
+}

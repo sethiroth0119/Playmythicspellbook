@@ -27,4 +27,15 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # ⚠ Wrangler 4 is REQUIRED. The action's default (3.90) does not read
+          #   wrangler.jsonc, so it saw no `main` and failed every deploy since
+          #   2026-08-13 with "Missing entry-point" — main looked deployed and
+          #   was not. package.json already pins wrangler ^4; keep these in step.
+          # 🔴 THIS LINE HAS BEEN LOST ONCE ALREADY. 1229709 added it; merge
+          #   449ac97 (v121v116) resolved this file in favour of the side that
+          #   never had it, silently reverting the fix, and the next push failed
+          #   on "Missing entry-point" again. The revert is invisible in the
+          #   merge's own diff, so if you resolve a conflict in this file, check
+          #   that this line survived before pushing.
+          wranglerVersion: "4"
           command: deploy

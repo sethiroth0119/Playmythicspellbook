@@ -134,21 +134,50 @@ assets/Units/unit frames/New units/Grey Dragon Animate rare.gif
 !assets/Boosterandpacks/Glb/BOU! pack.glb
 !assets/gib files/Prince The adam Changer.glb
 !assets/gib files/The Tour Guide.glb
-!assets/3d models/Man eacthing plant statue.glb
-!assets/3d models/packopening shelf.glb
-!assets/3d models/cardshelf.glb
-!assets/3d models/Bahamut statue.glb
 !assets/3d models/Mythci deck.glb
-!assets/3d models/Vendor market cash register.glb
-!assets/3d models/base chair.glb
 !assets/3d models/cindercore.glb
 !assets/3d models/abandontank.glb
-!assets/3d models/posters/Birth Of Universe 1.glb
-!assets/3d models/Base survivor bed.glb
-!assets/3d models/sircedric statue.glb
 !assets/3d models/prn nodes.glb
-!assets/3d models/Battletable.glb
 !assets/3d models/ruin house 1.glb
+
+# 🔴 TEN MODELS WERE REMOVED FROM THE LIST ABOVE ON 2026-10-28, AND THE FILES
+#    THEY NAME ARE STILL SITTING IN `assets/3d models/` AT 33-66 MiB. PUTTING
+#    ANY ONE OF THEM BACK RE-BREAKS EVERY DEPLOY.
+#
+#      Man eacthing plant statue.glb   65.7 MiB      base chair.glb          45.8 MiB
+#      packopening shelf.glb           63.8 MiB      posters/Birth Of …1.glb 41.9 MiB
+#      cardshelf.glb                   63.8 MiB      Base survivor bed.glb   39.4 MiB
+#      Bahamut statue.glb              62.7 MiB      sircedric statue.glb    36.4 MiB
+#      Vendor market cash register.glb 53.4 MiB      Battletable.glb         32.9 MiB
+#
+# The block header above is the whole explanation: a name goes on this list only
+# AFTER the file it points at has been compressed and VERIFIED under 25 MiB.
+# These ten never were. The `!` lines and the oversized files reached `main`
+# from OPPOSITE SIDES of merge 449ac97 (v121v116) and had never met before:
+#   • parent 2025a4b  — files present at 62-66 MiB, NOT re-included, so the
+#                       blanket `**/*.glb` ignored them. This side deployed.
+#   • parent 78a06ae  — the `!` lines present, but no such files under public/,
+#                       so the lines were inert. This side deployed too.
+# The merge took the list from one and the files from the other, which un-ignored
+# a 62.7 MiB asset — and ONE oversized asset aborts the ENTIRE deploy, exactly as
+# this file's header warns. Every push to main failed on
+#   ✘ [ERROR] Asset too large … Bahamut statue.glb … 62.7 MiB
+# so production sat frozen on a stale build while the deploy looked merely red.
+#
+# ⚠ REMOVING THESE LINES 404s NOTHING. Checked before removing them: not one of
+#   the ten is referenced by any .js or .html under public/. They are staging
+#   drops, not runtime assets, which is why the blanket rule covered them for
+#   months without anyone noticing.
+# ⚠ THE RIGHT WAY BACK IS COMPRESSION, NOT AN `!` LINE. If one of these is ever
+#   wanted in-game: run it through the pipeline the header describes, confirm it
+#   is under the cap, THEN add its line back — one file, verified, at a time.
+#   An `!` line is a claim that the work was already done.
+# ⚠ THE FIVE LINES LEFT ABOVE NAME FILES THAT ARE NOT PRESENT (Mythci deck,
+#   cindercore, abandontank, prn nodes, ruin house 1). They are inert and left
+#   alone deliberately: they cost nothing, and they are correct the moment a
+#   compressed version of one lands. Do not read their presence as proof that
+#   an `!` line is safe.
+
 
 # 🚜 THE WAREHOUSE FORKLIFT. On the allow-list because **/*.glb above blocks
 # every model by default and this one has to ship — the warehouse loads it when
